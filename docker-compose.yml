@@ -1,0 +1,121 @@
+# docker-compose.yml (version complète)
+services:
+  # ============================================================
+  # PostgreSQL - Base de données
+  # ============================================================
+  postgres:
+    image: postgres:16
+    container_name: hydrology_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-hydrometry}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init_db.sql:/docker-entrypoint-initdb.d/01_init_db.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - hydrology_network
+
+  # ============================================================
+  # pgAdmin - Interface graphique
+  # ============================================================
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: hydrology_pgadmin
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@hydrology.com
+      PGADMIN_DEFAULT_PASSWORD: admin
+      PGADMIN_CONFIG_SERVER_MODE: 'False'
+    ports:
+      - "5050:80"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    networks:
+      - hydrology_network
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # ============================================================
+  # Application - Agents
+  # ============================================================
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: hydrology_app
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: ${POSTGRES_DB:-hydrometry}
+      DB_USER: ${POSTGRES_USER:-postgres}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      DB_SCHEMA: public
+      PYTHONPATH: /app
+    volumes:
+      - ./data:/app/data
+      - ./output:/app/output
+      - ./config:/app/config
+      - ./src:/app/src
+    networks:
+      - hydrology_network
+
+  # ============================================================
+  # Streamlit - Interface utilisateur
+  # ============================================================
+  streamlit:
+    build:
+      context: .
+      dockerfile: Dockerfile.streamlit
+    container_name: hydrology_streamlit
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: ${POSTGRES_DB:-hydrometry}
+      DB_USER: ${POSTGRES_USER:-postgres}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      DB_SCHEMA: public
+      PYTHONPATH: /app
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./src:/app/src
+      - ./config:/app/config
+      - ./output:/app/output
+      - ./data:/app/data
+    networks:
+      - hydrology_network
+
+# ============================================================
+# Volumes
+# ============================================================
+volumes:
+  postgres_data:
+    name: hydrology_postgres_data
+  pgadmin_data:
+    name: hydrology_pgadmin_data
+
+# ============================================================
+# Networks
+# ============================================================
+networks:
+  hydrology_network:
+    name: hydrology_network
+    driver: bridge
