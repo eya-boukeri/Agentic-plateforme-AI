@@ -83,7 +83,13 @@ def generate_annuaire():
     else:
         data = request.form
     
-    annee = data.get('annee', 2019)
+    try:
+        annee = int(data.get('annee', 2019))
+    except (TypeError, ValueError):
+        return jsonify({
+            'status': 'error',
+            'message': "L'année doit être un nombre entier valide"
+        }), 400
     
     try:
         print(f"📄 Génération de l'annuaire {annee}...")

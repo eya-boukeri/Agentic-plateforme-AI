@@ -203,17 +203,23 @@ class AgentCalcul:
                 s."SousZone" as sous_zone,
                 s."GrandBassin" as grand_bassin,
                 s."Bassin" as bassin,
-                NULL::numeric as superficie,
-                NULL::numeric as x_utm,
-                NULL::numeric as y_utm,
-                NULL::numeric as altitude,
+                s."Superficie_bv" as superficie,
+                s."Longitude" as x_utm,
+                s."Latitude" as y_utm,
+                s."Altitude" as altitude,
                 NULL::date as date_mise_service
             FROM stations_base s
             WHERE s."Id_Station" = %s
         """
         return pd.read_sql(query, self.engine, params=(id_station,))
+
+    def _hydrological_window(self, annee):
+        start_date = pd.Timestamp(year=int(annee), month=9, day=1)
+        end_date = pd.Timestamp(year=int(annee) + 1, month=9, day=1)
+        return start_date, end_date
     
     def get_debits_station(self, id_station, annee):
+        start_date, end_date = self._hydrological_window(annee)
         query = """
             SELECT 
                 "Date",
@@ -223,10 +229,11 @@ class AgentCalcul:
                 "Qualite"
             FROM debits
             WHERE "Id_Station" = %s
-              AND EXTRACT(YEAR FROM "Date") = %s
+              AND "Date" >= %s
+              AND "Date" < %s
             ORDER BY "Date"
         """
-        return pd.read_sql(query, self.engine, params=(id_station, annee))
+        return pd.read_sql(query, self.engine, params=(id_station, start_date, end_date))
     
     def has_j1_data(self, df):
         if 'capteur' not in df.columns:
@@ -377,6 +384,140 @@ class AgentCalcul:
         self.conn.commit()
         cursor.close()
         print(f"   ✅ {len(df_journalier)} jours sauvegardés dans debits_journaliers")
+
+    def calculer_crues(self, id_station, annee, seuil_crue=None):
+        df = self.get_debits_station(id_station, annee)
+
+        if df.empty:
+            return pd.DataFrame()
+
+        df = df.copy()
+        df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
+        df["debit_m3s"] = pd.to_numeric(df["debit_m3s"], errors="coerce")
+        df = df.dropna(subset=["Date", "debit_m3s"]).sort_values("Date").reset_index(drop=True)
+
+        if df.empty:
+            return pd.DataFrame()
+
+        if seuil_crue is None:
+            seuil_quantile = float(df["debit_m3s"].quantile(0.95))
+            seuil_sigma = float(df["debit_m3s"].mean() + 2 * df["debit_m3s"].std(ddof=0))
+            seuil_crue = max(seuil_quantile, seuil_sigma)
+
+        above = df["debit_m3s"] > seuil_crue
+        segments = []
+        start_idx = None
+
+        for idx, is_above in enumerate(above):
+            if is_above and start_idx is None:
+                start_idx = idx
+            elif not is_above and start_idx is not None:
+                segments.append((start_idx, idx - 1))
+                start_idx = None
+
+        if start_idx is not None:
+            segments.append((start_idx, len(df) - 1))
+
+        if not segments:
+            peak_idx = int(df["debit_m3s"].idxmax())
+            segments = [(max(0, peak_idx - 1), min(len(df) - 1, peak_idx + 1))]
+
+        station_info = self.get_station_info(id_station)
+        superficie = None
+        if not station_info.empty and 'superficie' in station_info.columns:
+            superficie = station_info['superficie'].iloc[0]
+
+        events = []
+        for start_idx, end_idx in segments:
+            event_start = max(0, start_idx - 1)
+            event_end = min(len(df) - 1, end_idx + 1)
+            event_df = df.iloc[event_start:event_end + 1].copy()
+
+            if event_df.empty:
+                continue
+
+            peak_rel_idx = event_df["debit_m3s"].idxmax()
+            peak_row = event_df.loc[peak_rel_idx]
+            date_debut = event_df["Date"].iloc[0]
+            date_fin = event_df["Date"].iloc[-1]
+            debit_debut = float(event_df["debit_m3s"].iloc[0])
+            debit_fin = float(event_df["debit_m3s"].iloc[-1])
+            debit_max = float(peak_row["debit_m3s"])
+
+            temps_base_min = int(max(0, (date_fin - date_debut).total_seconds() / 60))
+            temps_montee_min = int(max(0, (peak_row["Date"] - date_debut).total_seconds() / 60))
+
+            volume_m3 = 0.0
+            if len(event_df) > 1:
+                times = event_df["Date"].astype("int64") / 1e9
+                values = event_df["debit_m3s"].astype(float).to_numpy()
+                volume_m3 = float(np.trapz(values, x=times))
+            volume_ecoule_hm3 = volume_m3 / 1e6
+
+            if superficie and superficie > 0:
+                lame_ecoulee_mm = (volume_ecoule_hm3 / superficie) * 1000
+                lame_ruiss_mm = lame_ecoulee_mm
+                volume_ruiss_hm3 = volume_ecoule_hm3
+            else:
+                lame_ecoulee_mm = None
+                lame_ruiss_mm = None
+                volume_ruiss_hm3 = volume_ecoule_hm3
+
+            events.append({
+                'code_station': id_station,
+                'annee': annee,
+                'date_debut': date_debut,
+                'date_fin': date_fin,
+                'temps_base_min': temps_base_min,
+                'temps_montee_min': temps_montee_min,
+                'debit_debut': debit_debut,
+                'debit_fin': debit_fin,
+                'debit_max_m3s': debit_max,
+                'volume_ecoule_hm3': volume_ecoule_hm3,
+                'volume_ruiss_hm3': volume_ruiss_hm3,
+                'lame_ecoulee_mm': lame_ecoulee_mm,
+                'lame_ruiss_mm': lame_ruiss_mm,
+            })
+
+        return pd.DataFrame(events)
+
+    def sauvegarder_crues(self, id_station, annee, df_crues):
+        cursor = self.conn.cursor()
+        cursor.execute("DELETE FROM crues WHERE code_station = %s AND annee = %s", (id_station, annee))
+
+        if df_crues is not None and not df_crues.empty:
+            for _, row in df_crues.iterrows():
+                cursor.execute("""
+                    INSERT INTO crues (
+                        code_station, annee,
+                        date_debut, date_fin,
+                        temps_base_min, temps_montee_min,
+                        debit_debut, debit_fin,
+                        debit_max_m3s,
+                        volume_ecoule_hm3, volume_ruiss_hm3,
+                        lame_ecoulee_mm, lame_ruiss_mm
+                    ) VALUES (
+                        %s, %s,
+                        %s, %s,
+                        %s, %s,
+                        %s, %s,
+                        %s,
+                        %s, %s,
+                        %s, %s
+                    )
+                """, (
+                    row['code_station'], row['annee'],
+                    row['date_debut'], row['date_fin'],
+                    row['temps_base_min'], row['temps_montee_min'],
+                    row['debit_debut'], row['debit_fin'],
+                    row['debit_max_m3s'],
+                    row['volume_ecoule_hm3'], row['volume_ruiss_hm3'],
+                    row['lame_ecoulee_mm'], row['lame_ruiss_mm'],
+                ))
+
+        self.conn.commit()
+        cursor.close()
+        print(f"   ✅ {0 if df_crues is None else len(df_crues)} crue(s) sauvegardée(s) dans crues")
     
     def calculer_statistiques_annuelles(self, id_station, annee):
         print(f"\n📊 Calcul des statistiques pour {id_station} ({annee})")
@@ -484,7 +625,7 @@ class AgentCalcul:
                     nb_jours_presents = %s,
                     taux_remplissage = %s,
                     source = %s,
-                    date_calcul = NOW()
+                    created_at = NOW()
                 WHERE code_station = %s AND annee = %s
             """, (
                 stats['debit_moyen'],
@@ -550,6 +691,9 @@ class AgentCalcul:
         df_journalier = self.get_debits_journaliers(id_station, annee)
         if not df_journalier.empty:
             self.sauvegarder_debits_journaliers(id_station, annee, df_journalier)
+
+        df_crues = self.calculer_crues(id_station, annee, seuil_crue)
+        self.sauvegarder_crues(id_station, annee, df_crues)
         
         stats = self.calculer_statistiques_annuelles(id_station, annee)
         if stats:
