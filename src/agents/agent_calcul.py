@@ -13,6 +13,7 @@ import pandas as pd
 import numpy as np
 from datetime import datetime
 from sqlalchemy import create_engine
+from sqlalchemy.engine import URL
 
 class AgentCalcul:
     def __init__(self, db_config=None):
@@ -28,15 +29,22 @@ class AgentCalcul:
     
     def connect(self):
         try:
-            self.engine = create_engine(
-                f"postgresql+psycopg2://{self.db_user}:{self.db_password}@{self.db_host}:{self.db_port}/{self.db_name}"
+            db_url = URL.create(
+                "postgresql+psycopg2",
+                username=self.db_user,
+                password=self.db_password,
+                host=self.db_host,
+                port=self.db_port,
+                database=self.db_name,
             )
+            self.engine = create_engine(db_url, connect_args={"client_encoding": "utf8"})
             self.conn = psycopg2.connect(
                 host=self.db_host,
                 port=self.db_port,
                 database=self.db_name,
                 user=self.db_user,
-                password=self.db_password
+                password=self.db_password,
+                client_encoding="utf8"
             )
             print(f"✅ Connexion PostgreSQL : {self.db_host}:{self.db_port}/{self.db_name}")
         except Exception as e:
@@ -385,7 +393,25 @@ class AgentCalcul:
         cursor.close()
         print(f"   ✅ {len(df_journalier)} jours sauvegardés dans debits_journaliers")
 
-    def calculer_crues(self, id_station, annee, seuil_crue=None):
+    def calculer_crues(self, id_station, annee, seuil_crue=None,
+                        min_separation_heures=48, min_duree_heures=6,
+                        marge_relative=0.10):
+        """
+        Détecte les crues par dépassement de seuil, avec critères
+        d'indépendance hydrologique pour éviter la sur-détection :
+
+        - seuil_crue : seuil de débit (m3/s). Si None, calculé automatiquement
+          et rendu plus strict (quantile 0.97 et moyenne + 3*sigma).
+        - min_separation_heures : deux dépassements séparés de moins que ce
+          délai sont fusionnés en une seule et même crue (évite qu'un même
+          épisode oscillant autour du seuil soit compté plusieurs fois).
+        - min_duree_heures : durée minimale au-dessus du seuil pour qu'un
+          épisode soit retenu comme une vraie crue (élimine les pics de bruit
+          de très courte durée).
+        - marge_relative : le débit de pointe doit dépasser le seuil d'au
+          moins cette fraction (ex: 0.10 = 10%) pour être retenu ; élimine
+          les dépassements qui ne font qu'effleurer le seuil.
+        """
         df = self.get_debits_station(id_station, annee)
 
         if df.empty:
@@ -400,8 +426,8 @@ class AgentCalcul:
             return pd.DataFrame()
 
         if seuil_crue is None:
-            seuil_quantile = float(df["debit_m3s"].quantile(0.95))
-            seuil_sigma = float(df["debit_m3s"].mean() + 2 * df["debit_m3s"].std(ddof=0))
+            seuil_quantile = float(df["debit_m3s"].quantile(0.97))
+            seuil_sigma = float(df["debit_m3s"].mean() + 3 * df["debit_m3s"].std(ddof=0))
             seuil_crue = max(seuil_quantile, seuil_sigma)
 
         above = df["debit_m3s"] > seuil_crue
@@ -417,6 +443,30 @@ class AgentCalcul:
 
         if start_idx is not None:
             segments.append((start_idx, len(df) - 1))
+
+        # --- Fusion des segments trop rapprochés dans le temps ---
+        # Deux dépassements séparés par un intervalle inférieur à
+        # min_separation_heures appartiennent au même épisode de crue.
+        if segments:
+            fusionnes = [segments[0]]
+            for start_idx, end_idx in segments[1:]:
+                prev_start, prev_end = fusionnes[-1]
+                gap = (df["Date"].iloc[start_idx] - df["Date"].iloc[prev_end]).total_seconds() / 3600
+                if gap <= min_separation_heures:
+                    fusionnes[-1] = (prev_start, end_idx)
+                else:
+                    fusionnes.append((start_idx, end_idx))
+            segments = fusionnes
+
+        # --- Filtrage : durée minimale ET marge de dépassement minimale ---
+        segments_valides = []
+        for start_idx, end_idx in segments:
+            duree_h = (df["Date"].iloc[end_idx] - df["Date"].iloc[start_idx]).total_seconds() / 3600
+            pic = float(df["debit_m3s"].iloc[start_idx:end_idx + 1].max())
+            if duree_h < min_duree_heures or pic < seuil_crue * (1 + marge_relative):
+                continue
+            segments_valides.append((start_idx, end_idx))
+        segments = segments_valides
 
         if not segments:
             peak_idx = int(df["debit_m3s"].idxmax())

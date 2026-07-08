@@ -8,6 +8,7 @@ import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from sqlalchemy import create_engine
+from sqlalchemy.engine import URL
 import pandas as pd
 import numpy as np
 from datetime import datetime
@@ -43,9 +44,19 @@ class AgentEdition:
             self.annee = 2019
         self.output_dir = output_dir
         
-        # Connexion avec mot de passe simple
-        db_url = f"postgresql://{self.db_user}:{self.db_password}@{self.db_host}:{self.db_port}/{self.db_name}"
-        self.engine = create_engine(db_url)
+        # Connexion : on utilise URL.create() plutôt qu'une f-string pour que
+        # SQLAlchemy échappe correctement tout caractère spécial ou non-ASCII
+        # présent dans l'utilisateur/mot de passe (évite les erreurs de
+        # décodage lors du parsing de la chaîne de connexion par psycopg2).
+        db_url = URL.create(
+            "postgresql+psycopg2",
+            username=self.db_user,
+            password=self.db_password,
+            host=self.db_host,
+            port=self.db_port,
+            database=self.db_name,
+        )
+        self.engine = create_engine(db_url, connect_args={"client_encoding": "utf8"})
         print(f"✅ Connexion PostgreSQL : {self.db_host}:{self.db_port}/{self.db_name}")
         
         os.makedirs(self.output_dir, exist_ok=True)
@@ -454,7 +465,18 @@ class AgentEdition:
             ("L_Ruiss\n(mm)", "lame_ruiss_mm"),
         ]
 
-        data = [[Paragraph(f"<b>{label}</b>", getSampleStyleSheet()["BodyText"]) for label, _ in columns]]
+        FONT_SIZE = 3.6
+        LEADING = 4.0
+
+        # NB: la taille de police définie dans TableStyle("FONTSIZE", ...) ne
+        # s'applique qu'au texte brut, pas aux flowables Paragraph. Comme
+        # l'en-tête et les cellules sont des Paragraph, il faut fixer la
+        # taille explicitement via la balise <font size='...'> pour qu'elle
+        # soit réellement prise en compte (sinon l'en-tête reste à ~10pt).
+        data = [[
+            Paragraph(f"<font size='{FONT_SIZE}'><b>{label}</b></font>", getSampleStyleSheet()["BodyText"])
+            for label, _ in columns
+        ]]
 
         for _, row in crues_df.iterrows():
             row_values = []
@@ -478,7 +500,7 @@ class AgentEdition:
                 else:
                     value = self._format_value(value)
 
-                row_values.append(Paragraph(f"<font size='4.4'>{value}</font>", getSampleStyleSheet()["BodyText"]))
+                row_values.append(Paragraph(f"<font size='{FONT_SIZE}'>{value}</font>", getSampleStyleSheet()["BodyText"]))
             data.append(row_values)
 
         width = 16.1 * cm
@@ -487,13 +509,15 @@ class AgentEdition:
         table.setStyle(TableStyle([
             ("BACKGROUND", (0, 0), (-1, 0), colors.white),
             ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-            ("FONTSIZE", (0, 0), (-1, -1), 4.4),
-            ("LEADING", (0, 0), (-1, -1), 5),
-            ("GRID", (0, 0), (-1, -1), 0.6, colors.black),
+            ("FONTSIZE", (0, 0), (-1, -1), FONT_SIZE),
+            ("LEADING", (0, 0), (-1, -1), LEADING),
+            ("GRID", (0, 0), (-1, -1), 0.5, colors.black),
             ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
             ("ALIGN", (0, 0), (-1, -1), "CENTER"),
-            ("TOPPADDING", (0, 0), (-1, -1), 2),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+            ("TOPPADDING", (0, 0), (-1, -1), 1),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 1),
+            ("LEFTPADDING", (0, 0), (-1, -1), 1),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 1),
         ]))
         return table
 
