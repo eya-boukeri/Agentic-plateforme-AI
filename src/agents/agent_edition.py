@@ -1,6 +1,7 @@
 """
 src/agents/agent_edition.py
 Agent Édition - Génération de l'annuaire hydrométrique PDF
+Version avec organisation par gouvernorat
 """
 
 import sys
@@ -16,10 +17,100 @@ import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import cm
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak, Image, Table, TableStyle, KeepTogether
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak, Image, Table, TableStyle, Frame, PageTemplate, BaseDocTemplate
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
-from reportlab.lib.enums import TA_CENTER
+from reportlab.lib.enums import TA_CENTER, TA_RIGHT, TA_LEFT
+
+# Ordre des gouvernorats comme dans l'annuaire manuel
+GOUVERNORATS_ORDER = [
+    "L'ARIANA",
+    "MANOUBA", 
+    "BIZERTE",
+    "BEJA",
+    "JENDOUBA",
+    "KEF",
+    "SILIANA",
+    "BEN AROUS",
+    "NABEUL",
+    "ZAGHOUAN",
+    "KAIROUAN",
+    "KASSERINE",
+    "SIDI BOUZID",
+    "SOUSSE",
+    "MONASTIR",
+    "MAHDIA",
+    "SFAX",
+    "GAFSA",
+    "GABES",
+    "KEBILI",
+    "TOZEUR",
+    "MEDENINE",
+    "TATAOUINE"
+]
+
+class HeaderFooterDocTemplate(BaseDocTemplate):
+    """Template personnalisé avec en-tête et pied de page"""
+    
+    def __init__(self, filename, **kwargs):
+        self.page_number = 0
+        self.station_name = ""
+        self.annee = ""
+        self.gouvernorat = ""
+        super().__init__(filename, **kwargs)
+        
+        self.topMargin = 2.8*cm
+        self.bottomMargin = 2.2*cm
+        self.leftMargin = 1.5*cm
+        self.rightMargin = 1.5*cm
+        
+        frame = Frame(
+            self.leftMargin,
+            self.bottomMargin,
+            self.width,
+            self.height,
+            id='normal'
+        )
+        
+        self.addPageTemplates([
+            PageTemplate(
+                id='OneColumn',
+                frames=frame,
+                onPage=self._header_footer
+            )
+        ])
+    
+    def _header_footer(self, canvas, doc):
+        canvas.saveState()
+        
+        # En-tête
+        canvas.setFont('Helvetica-Bold', 8)
+        canvas.drawString(doc.leftMargin, A4[1] - 1.8*cm, "REPUBLIQUE TUNISIENNE")
+        canvas.setFont('Helvetica', 7)
+        canvas.drawString(doc.leftMargin, A4[1] - 2.2*cm, "Ministere de l'Agriculture, des Ressources Hydrauliques et de la Peche")
+        canvas.drawString(doc.leftMargin, A4[1] - 2.5*cm, "Direction Generale des Ressources en Eau")
+        
+        canvas.line(doc.leftMargin, A4[1] - 2.6*cm, A4[0] - doc.rightMargin, A4[1] - 2.6*cm)
+        
+        # Titre du gouvernorat au centre
+        if doc.gouvernorat:
+            canvas.setFont('Helvetica-Bold', 10)
+            canvas.drawCentredString(A4[0]/2, A4[1] - 2.0*cm, f"Gouvernorat de {doc.gouvernorat}")
+        elif doc.station_name:
+            canvas.setFont('Helvetica-Bold', 9)
+            canvas.drawCentredString(A4[0]/2, A4[1] - 2.0*cm, doc.station_name)
+        
+        # Pied de page
+        canvas.setFont('Helvetica', 7)
+        canvas.drawString(doc.leftMargin, doc.bottomMargin - 0.5*cm, f"Annuaire Hydrologique de la Tunisie, {doc.annee}")
+        canvas.drawRightString(A4[0] - doc.rightMargin, doc.bottomMargin - 0.5*cm, f"Page {doc.page}")
+        canvas.line(doc.leftMargin, doc.bottomMargin - 0.4*cm, A4[0] - doc.rightMargin, doc.bottomMargin - 0.4*cm)
+        
+        canvas.restoreState()
+    
+    def afterFlowable(self, flowable):
+        self.page = self.page + 1
+
 
 class AgentEdition:
     def __init__(self, db_config=None, annee=None, output_dir="output/pdf/"):
@@ -30,7 +121,6 @@ class AgentEdition:
         self.db_user = 'postgres'
         self.db_password = 'postgres'  
         
-        # Surcharger si config fournie
         if db_config:
             self.db_host = db_config.get('host', self.db_host)
             self.db_port = db_config.get('port', self.db_port)
@@ -44,10 +134,6 @@ class AgentEdition:
             self.annee = 2019
         self.output_dir = output_dir
         
-        # Connexion : on utilise URL.create() plutôt qu'une f-string pour que
-        # SQLAlchemy échappe correctement tout caractère spécial ou non-ASCII
-        # présent dans l'utilisateur/mot de passe (évite les erreurs de
-        # décodage lors du parsing de la chaîne de connexion par psycopg2).
         db_url = URL.create(
             "postgresql+psycopg2",
             username=self.db_user,
@@ -57,7 +143,7 @@ class AgentEdition:
             database=self.db_name,
         )
         self.engine = create_engine(db_url, connect_args={"client_encoding": "utf8"})
-        print(f"✅ Connexion PostgreSQL : {self.db_host}:{self.db_port}/{self.db_name}")
+        print(f"Connexion PostgreSQL : {self.db_host}:{self.db_port}/{self.db_name}")
         
         os.makedirs(self.output_dir, exist_ok=True)
         os.makedirs("output/graphs/", exist_ok=True)
@@ -65,19 +151,85 @@ class AgentEdition:
     def close(self):
         if self.engine:
             self.engine.dispose()
-            print("🔒 Connexion fermée")
+            print("Connexion fermee")
     
-    def get_stations(self):
-        query = """
-            SELECT DISTINCT 
-                s."Id_Station" as code_station,
-                s."Nom" as nom
-            FROM stations_base s
-            INNER JOIN statistiques_annuelles st ON s."Id_Station" = st.code_station
-            WHERE st.annee = %s
-            ORDER BY s."Nom"
-        """
-        return pd.read_sql(query, self.engine, params=(self.annee,))
+    def get_stations_with_gouvernorat(self):
+        """Récupère les stations avec leur gouvernorat"""
+        # Essayer plusieurs noms de colonne possibles pour le gouvernorat
+        try:
+            query = """
+                SELECT DISTINCT 
+                    s."Id_Station" as code_station,
+                    s."Nom" as nom,
+                    s."Gouvernorat" as gouvernorat
+                FROM stations_base s
+                INNER JOIN statistiques_annuelles st ON s."Id_Station" = st.code_station
+                WHERE st.annee = %s
+                ORDER BY s."Gouvernorat", s."Nom"
+            """
+            return pd.read_sql(query, self.engine, params=(self.annee,))
+        except Exception:
+            print("Colonne 'Gouvernorat' non trouvee, essai avec 'Gouv'...")
+            try:
+                query = """
+                    SELECT DISTINCT 
+                        s."Id_Station" as code_station,
+                        s."Nom" as nom,
+                        s."Gouv" as gouvernorat
+                    FROM stations_base s
+                    INNER JOIN statistiques_annuelles st ON s."Id_Station" = st.code_station
+                    WHERE st.annee = %s
+                    ORDER BY s."Gouv", s."Nom"
+                """
+                return pd.read_sql(query, self.engine, params=(self.annee,))
+            except Exception:
+                print("Colonne 'Gouv' non trouvee, essai avec 'Zone'...")
+                try:
+                    query = """
+                        SELECT DISTINCT 
+                            s."Id_Station" as code_station,
+                            s."Nom" as nom,
+                            s."Zone" as gouvernorat
+                        FROM stations_base s
+                        INNER JOIN statistiques_annuelles st ON s."Id_Station" = st.code_station
+                        WHERE st.annee = %s
+                        ORDER BY s."Zone", s."Nom"
+                    """
+                    return pd.read_sql(query, self.engine, params=(self.annee,))
+                except Exception:
+                    print("Colonne 'Zone' non trouvee, essai avec 'Secteur'...")
+                    try:
+                        query = """
+                            SELECT DISTINCT 
+                                s."Id_Station" as code_station,
+                                s."Nom" as nom,
+                                s."Secteur" as gouvernorat
+                            FROM stations_base s
+                            INNER JOIN statistiques_annuelles st ON s."Id_Station" = st.code_station
+                            WHERE st.annee = %s
+                            ORDER BY s."Secteur", s."Nom"
+                        """
+                        return pd.read_sql(query, self.engine, params=(self.annee,))
+                    except Exception:
+                        print("Aucune colonne de gouvernorat trouvee.")
+                        print("Les colonnes disponibles sont :")
+                        try:
+                            sample_query = "SELECT * FROM stations_base LIMIT 1"
+                            df_sample = pd.read_sql(sample_query, self.engine)
+                            print(f"   Colonnes: {', '.join(df_sample.columns)}")
+                        except:
+                            pass
+                        query = """
+                            SELECT DISTINCT 
+                                s."Id_Station" as code_station,
+                                s."Nom" as nom,
+                                'Toutes' as gouvernorat
+                            FROM stations_base s
+                            INNER JOIN statistiques_annuelles st ON s."Id_Station" = st.code_station
+                            WHERE st.annee = %s
+                            ORDER BY s."Nom"
+                        """
+                        return pd.read_sql(query, self.engine, params=(self.annee,))
     
     def get_statistiques(self, code_station):
         query = """
@@ -163,6 +315,22 @@ class AgentEdition:
         """
         return pd.read_sql(query, self.engine, params=(code_station, self.annee))
 
+    def get_debits_instantanes(self, code_station, date_debut, date_fin):
+        query = """
+            SELECT "Date" AS date_heure, "Valeur" AS debit_m3s
+            FROM debits
+            WHERE "Id_Station" = %s
+              AND "Date" >= %s
+              AND "Date" <= %s
+            ORDER BY "Date"
+        """
+        df = pd.read_sql(query, self.engine, params=(code_station, date_debut, date_fin))
+        if df.empty:
+            return df
+        df["date_heure"] = pd.to_datetime(df["date_heure"], errors="coerce")
+        df["debit_m3s"] = pd.to_numeric(df["debit_m3s"], errors="coerce")
+        return df.dropna(subset=["date_heure", "debit_m3s"]).sort_values("date_heure")
+
     def get_etalonnage(self, code_station):
         query = """
             SELECT hauteur_cm, debit_m3s, date_validite, description
@@ -179,10 +347,7 @@ class AgentEdition:
         df_debits = self.get_debits_journaliers(code_station)
 
         mois_order = [9, 10, 11, 12, 1, 2, 3, 4, 5, 6, 7, 8]
-        mois_labels = [
-            "Sep", "Oct", "Nov", "Déc", "Jan", "Fév",
-            "Mar", "Avr", "Mai", "Juin", "Juil", "Août"
-        ]
+        mois_labels = ["Sep", "Oct", "Nov", "Dec", "Jan", "Fev", "Mar", "Avr", "Mai", "Juin", "Juil", "Aout"]
 
         if df_debits.empty:
             tableau_vide = pd.DataFrame(index=range(1, 32), columns=mois_labels)
@@ -210,37 +375,40 @@ class AgentEdition:
     def _format_value(self, value, decimals=2):
         if pd.isna(value):
             return ""
-
         if isinstance(value, (pd.Timestamp, datetime)):
             return value.strftime("%d/%m/%Y")
-
         if isinstance(value, (float, np.floating)):
             return f"{value:.{decimals}f}".replace(".", ",")
-
         if isinstance(value, (int, np.integer)):
             return str(value)
-
-        if isinstance(value, (np.int64, np.int32, np.int16, np.int8)):
-            return str(int(value))
-
         return str(value)
 
-    def dataframe_to_table(self, df, font_size=6, header_bg=colors.HexColor("#1a5276")):
+    def dataframe_to_table(self, df, font_size=4.5, header_bg=colors.HexColor("#1a5276"), colWidths=None, total_width=None):
         if df is None or df.empty:
             return None
 
         data = [list(df.columns)]
         for _, row in df.iterrows():
-            data.append([self._format_value(value) for value in row.tolist()])
+            data.append([self._format_value(value, decimals=2) for value in row.tolist()])
 
-        table = Table(data, repeatRows=1)
+        # Always give this table explicit column widths. Left to its own
+        # devices, Table() sizes itself to the natural width of its content,
+        # which can end up wider than whatever fixed-width cell it's later
+        # placed into -- and unlike Paragraphs, a Table flowable can't shrink
+        # to fit, so ReportLab raises a LayoutError at doc.build() time.
+        if colWidths is None:
+            n_cols = len(data[0])
+            width = total_width if total_width is not None else 10.0 * cm
+            colWidths = [width / n_cols] * n_cols
+
+        table = Table(data, colWidths=colWidths, repeatRows=1)
         table.setStyle(TableStyle([
             ("BACKGROUND", (0, 0), (-1, 0), header_bg),
             ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
             ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
             ("FONTSIZE", (0, 0), (-1, -1), font_size),
             ("LEADING", (0, 0), (-1, -1), font_size + 1),
-            ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
+            ("GRID", (0, 0), (-1, -1), 0.2, colors.grey),
             ("ALIGN", (0, 0), (-1, -1), "CENTER"),
             ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
             ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.whitesmoke, colors.lightgrey]),
@@ -255,27 +423,11 @@ class AgentEdition:
                 return normalized[key]
         return default
 
-    def _station_info_rows(self, code_station, nom_station):
-        details = self.get_station_details(code_station)
-
-        return [
-            ["Station", f"{nom_station} - {code_station}"],
-            ["Date de mise en service", self._pick_value(details, ["Date mise en service", "DateMiseEnService", "Date_mise_en_service"])],
-            ["Secteur hydrographique", self._pick_value(details, ["Secteur hydrographique", "Secteur_Hydrographique", "Zone"])],
-            ["Sous-secteur hydrographique", self._pick_value(details, ["Sous-Secteur hydrographique", "SousZone", "Sous_secteur"])],
-            ["Cours d'eau", self._pick_value(details, ["Cours d'eau", "Cours_eau", "CoursEau"])],
-            ["Superficie bassin", self._pick_value(details, ["Superficie", "Superficie_Bassin", "superficie"])],
-            ["Coordonnées UTM", f"X: {self._pick_value(details, ['X_UTM', 'x_utm'])} / Y: {self._pick_value(details, ['Y_UTM', 'y_utm'])}"],
-            ["Altitude", self._pick_value(details, ["Altitude", "altitude"])],
-            ["Crue maximale observée", self._pick_value(details, ["Crue maximale Observée", "Crue_maximale_observee", "SeuilCrue"])],
-            ["Dispositif de jaugeage", self._pick_value(details, ["Dispositif de jaugeage", "Equipement", "dispositif_jaugeage"])],
-        ]
-
     def _station_info_table(self, code_station, nom_station, font_size=6):
         details = self.get_station_details(code_station)
 
         def make_line(label, value, with_check=True):
-            prefix = "✓ " if with_check else ""
+            prefix = "" if with_check else ""
             formatted_value = self._format_value(value, decimals=3).replace("\n", "<br/>")
             return Paragraph(
                 f'<font size="{font_size}"><b>{prefix}{label}:</b> {formatted_value}</font>',
@@ -285,27 +437,33 @@ class AgentEdition:
         def make_title(text):
             return Paragraph(f'<font size="{font_size + 0.5}"><b>{text}</b></font>', getSampleStyleSheet()["BodyText"])
 
+        date_service = self._pick_value(details, ["Date mise en service", "DateMiseEnService"])
+        date_service = str(date_service) if date_service and date_service != "None" else "N/A"
+
+        superficie = self._pick_value(details, ["Superficie", "Superficie_Bassin", "superficie"])
+        superficie = f"{superficie} Km²" if superficie and superficie != "None" and superficie != 0 else "N/A"
+
         left_rows = [
-            [make_title("Caractéristiques de la station:")],
-            [make_line("Date de mise en service", self._pick_value(details, ["Date mise en service", "DateMiseEnService", "Date_mise_en_service"]))],
-            [make_line("Secteur hydrographique", self._pick_value(details, ["Secteur hydrographique", "Secteur_Hydrographique", "Zone"]))],
-            [make_line("Sous-Secteur hydrographique", self._pick_value(details, ["Sous-Secteur hydrographique", "SousZone", "Sous_secteur"]))],
-            [make_line("Cours d'eau", self._pick_value(details, ["Cours d'eau", "Cours_eau", "CoursEau"]))],
-            [make_line("Superficie Bassin", self._pick_value(details, ["Superficie", "Superficie_Bassin", "superficie"]))],
+            [make_title("Caracteristiques de la station:")],
+            [make_line("Date de mise en service", date_service)],
+            [make_line("Secteur hydrographique", self._pick_value(details, ["Secteur hydrographique", "Zone"]))],
+            [make_line("Sous-Secteur hydrographique", self._pick_value(details, ["Sous-Secteur", "SousZone"]))],
+            [make_line("Cours d'eau", self._pick_value(details, ["Cours d'eau", "CoursEau"]))],
+            [make_line("Superficie Bassin", superficie)],
             [make_title("Equipement de la station:")],
-            [make_line("Radar RLS + Duosens", self._pick_value(details, ["Equipement", "dispositif_jaugeage"]), with_check=True)],
-            [make_line("Echelle", self._pick_value(details, ["Echelle", "Echelle_Station", "echelle"]), with_check=True)],
+            [make_line("Radar RLS + Duosens", self._pick_value(details, ["Equipement"]), with_check=True)],
+            [make_line("Echelle", self._pick_value(details, ["Echelle"]), with_check=True)],
         ]
 
         right_rows = [
             [make_title(" ")],
-            [make_line("Coordonnées (UTM en m) X", self._pick_value(details, ["X_UTM", "x_utm"]))],
-            [make_line("Coordonnées (UTM en m) Y", self._pick_value(details, ["Y_UTM", "y_utm"]))],
-            [make_line("Altitude approximative", self._pick_value(details, ["Altitude", "altitude"]))],
-            [make_line("Crue maximale Observée", f"{self._pick_value(details, ['Crue maximale Observée', 'Crue_maximale_observee', 'SeuilCrue'])}\nle 28 Février 2012")],
+            [make_line("Coordonnees (UTM en m) X", self._pick_value(details, ["X_UTM", "x_utm"]))],
+            [make_line("Coordonnees (UTM en m) Y", self._pick_value(details, ["Y_UTM", "y_utm"]))],
+            [make_line("Altitude approximative", self._pick_value(details, ["Altitude"]))],
+            [make_line("Crue maximale Observee", self._pick_value(details, ["Crue maximale Observee", "Crue_maximale_observee"]))],
             [make_title("Dispositif de Jaugeage:")],
-            [make_line("Crue", "saumnon de 50 kg et treuil")],
-            [make_line("Etiage", "à gué")],
+            [make_line("Crue", "saumon de 50 kg et treuil")],
+            [make_line("Etiage", "a gue")],
         ]
 
         left_table = Table(left_rows, colWidths=[8.0*cm])
@@ -327,7 +485,8 @@ class AgentEdition:
         ]))
 
         table = Table(
-            [[Paragraph("<font size='7'><b>1/Fiche de renseignements de la station: Transmission en temps réel</b></font>", getSampleStyleSheet()["BodyText"])], [Table([[left_table, right_table]], colWidths=[8.0*cm, 8.1*cm])]],
+            [[Paragraph("<font size='7'><b>1/Fiche de renseignements de la station:</b></font>", getSampleStyleSheet()["BodyText"])], 
+             [Table([[left_table, right_table]], colWidths=[8.0*cm, 8.1*cm])]],
             colWidths=[16.1*cm]
         )
         table.setStyle(TableStyle([
@@ -365,10 +524,52 @@ class AgentEdition:
         display = pd.concat([display, pd.DataFrame(summary_rows)], ignore_index=True)
         return display
 
+    def _extremes_lines(self, stats):
+        if not stats:
+            return None
+
+        def fmt_debit(value):
+            if value is None or pd.isna(value):
+                return "-"
+            try:
+                return f"{float(value):.2f}".replace(".", ",")
+            except:
+                return str(value)
+
+        def fmt_date_jour(value):
+            if value is None or pd.isna(value):
+                return ""
+            try:
+                return pd.to_datetime(value).strftime("%d/%m/%Y")
+            except:
+                return str(value)
+
+        def fmt_date_heure(value):
+            if value is None or pd.isna(value):
+                return ""
+            try:
+                ts = pd.to_datetime(value)
+                return f"{ts.strftime('%d/%m/%Y')} {ts.strftime('%H:%M')}"
+            except:
+                return str(value)
+
+        lignes = [
+            f"Max journalier = {fmt_debit(stats.get('debit_max_jour'))} m³/s le {fmt_date_jour(stats.get('date_max_jour'))}",
+            f"Min journalier = {fmt_debit(stats.get('debit_min_jour'))} m³/s le {fmt_date_jour(stats.get('date_min_jour'))}",
+            f"Mini Instantane = {fmt_debit(stats.get('debit_min_inst'))} m³/s --> {fmt_date_heure(stats.get('date_min_inst'))}",
+            f"Max Instantane = {fmt_debit(stats.get('debit_max_inst'))} m³/s --> {fmt_date_heure(stats.get('date_max_inst'))}",
+        ]
+
+        style = getSampleStyleSheet()["BodyText"]
+        return [Paragraph(f"<font size='7'>{ligne}</font>", style) for ligne in lignes]
+
     def _section_table(self, title, rows, col_widths=(5.3*cm, 10.1*cm), font_size=7):
         data = [[Paragraph(f"<b>{title}</b>", getSampleStyleSheet()["BodyText"]), ""]]
         for label, value in rows:
-            data.append([label, self._format_value(value, decimals=3) if isinstance(value, (float, np.floating)) else self._format_value(value)])
+            if isinstance(value, (float, np.floating)):
+                data.append([label, self._format_value(value, decimals=3)])
+            else:
+                data.append([label, self._format_value(value)])
 
         table = Table(data, colWidths=list(col_widths), repeatRows=1)
         table.setStyle(TableStyle([
@@ -398,9 +599,9 @@ class AgentEdition:
 
         fig, ax = plt.subplots(figsize=(4.8, 3.1))
         ax.plot(data["hauteur_cm"], data["debit_m3s"], color="#1a5276", marker="o", linewidth=1.2, markersize=2.5)
-        ax.set_title("Courbe d'étalonnage", fontsize=8)
+        ax.set_title("Courbe d'etalonnage", fontsize=8)
         ax.set_xlabel("Hauteur (cm)", fontsize=7)
-        ax.set_ylabel("Débit (m³/s)", fontsize=7)
+        ax.set_ylabel("Debit (m³/s)", fontsize=7)
         ax.grid(True, alpha=0.3)
         ax.tick_params(labelsize=6)
         plt.tight_layout()
@@ -410,32 +611,51 @@ class AgentEdition:
         plt.close(fig)
         return filename
 
-    def _plot_hydrogramme_crue(self, debits, stats, code_station):
-        if debits.empty or not stats:
+    def _plot_hydrogramme_crue_principale(self, crues_df, code_station, nom_station):
+        if crues_df is None or crues_df.empty:
             return None
-
-        date_max = pd.to_datetime(stats.get("date_max_jour"), errors="coerce")
-        if pd.isna(date_max):
+        
+        crues_df = crues_df.copy()
+        crues_df['debit_max_m3s'] = pd.to_numeric(crues_df['debit_max_m3s'], errors='coerce')
+        crue_max = crues_df.loc[crues_df['debit_max_m3s'].idxmax()]
+        
+        date_debut = pd.to_datetime(crue_max.get("date_debut"), errors="coerce")
+        date_fin = pd.to_datetime(crue_max.get("date_fin"), errors="coerce")
+        
+        if pd.isna(date_debut) or pd.isna(date_fin):
             return None
-
-        data = debits.copy()
-        data["jour"] = pd.to_datetime(data["jour"])
-        window = data[(data["jour"] >= date_max - pd.Timedelta(days=10)) & (data["jour"] <= date_max + pd.Timedelta(days=10))]
-        if window.empty:
-            window = data
-
+        
+        duree = date_fin - date_debut
+        marge_avant = duree if duree > pd.Timedelta(0) else pd.Timedelta(hours=48)
+        marge_apres = duree / 4 if duree > pd.Timedelta(0) else pd.Timedelta(hours=12)
+        
+        fenetre_debut = date_debut - marge_avant
+        fenetre_fin = date_fin + marge_apres
+        
+        serie = self.get_debits_instantanes(code_station, fenetre_debut, fenetre_fin)
+        if serie.empty:
+            return None
+        
         fig, ax = plt.subplots(figsize=(4.8, 3.1))
-        ax.plot(window["jour"], window["debit_moyen"], color="#2e5aac", linewidth=1.2)
-        ax.axvline(date_max, color="#c0392b", linestyle="--", linewidth=1)
-        ax.set_title("Hydrogramme de crue", fontsize=8)
+        ax.plot(serie["date_heure"], serie["debit_m3s"], color="#2e5aac", linewidth=1.0)
+        
+        date_pic = serie.loc[serie['debit_m3s'].idxmax(), 'date_heure']
+        debit_pic = serie['debit_m3s'].max()
+        ax.axvline(date_pic, color="#c0392b", linestyle="--", linewidth=0.8)
+        ax.annotate(f'Qmax={debit_pic:.1f} m³/s', 
+                   xy=(date_pic, debit_pic),
+                   xytext=(5, 5), textcoords='offset points',
+                   fontsize=6, color='#c0392b')
+        
+        ax.set_title(f"Hydrogramme de crue - {nom_station}", fontsize=8)
         ax.set_xlabel("Date", fontsize=7)
-        ax.set_ylabel("Débit (m³/s)", fontsize=7)
+        ax.set_ylabel("Debit (m³/s)", fontsize=7)
         ax.grid(True, alpha=0.3)
         ax.tick_params(labelsize=6)
         fig.autofmt_xdate(rotation=25)
         plt.tight_layout()
-
-        filename = f"output/graphs/crue_{code_station}_{self.annee}.png"
+        
+        filename = f"output/graphs/crue_principale_{code_station}_{self.annee}.png"
         fig.savefig(filename, dpi=250, bbox_inches="tight")
         plt.close(fig)
         return filename
@@ -450,29 +670,22 @@ class AgentEdition:
             return None
 
         columns = [
-            ("Date Début", "date_debut"),
+            ("Date Debut", "date_debut"),
             ("Date Fin", "date_fin"),
-            ("Tps_Base\n(mn)", "temps_base_min"),
-            ("Tps_Montée\n(mn)", "temps_montee_min"),
-            ("Val.Début\n(m³/s)", "debit_debut"),
-            ("Val.Fin\n(m³/s)", "debit_fin"),
-            ("Val_Maxi\n(m³/s)", "debit_max_m3s"),
-            ("V_Ecou\n(Hm³)", "volume_ecoule_hm3"),
-            ("V_Ruiss\n(Hm³)", "volume_ruiss_hm3"),
-            ("Q_Ecou\n(m³/s)", "debit_debut"),
-            ("Q_Ruiss\n(m³/s)", "debit_fin"),
-            ("L_Ecou\n(mm)", "lame_ecoulee_mm"),
-            ("L_Ruiss\n(mm)", "lame_ruiss_mm"),
+            ("Tps Base\n(mn)", "temps_base_min"),
+            ("Tps Montee\n(mn)", "temps_montee_min"),
+            ("Val Debut\n(m³/s)", "debit_debut"),
+            ("Val Fin\n(m³/s)", "debit_fin"),
+            ("Val Maxi\n(m³/s)", "debit_max_m3s"),
+            ("V Ecou\n(Hm³)", "volume_ecoule_hm3"),
+            ("V Ruiss\n(Hm³)", "volume_ruiss_hm3"),
+            ("L Ecou\n(mm)", "lame_ecoulee_mm"),
+            ("L Ruiss\n(mm)", "lame_ruiss_mm"),
         ]
 
-        FONT_SIZE = 3.6
-        LEADING = 4.0
+        FONT_SIZE = 4.0
+        LEADING = 4.5
 
-        # NB: la taille de police définie dans TableStyle("FONTSIZE", ...) ne
-        # s'applique qu'au texte brut, pas aux flowables Paragraph. Comme
-        # l'en-tête et les cellules sont des Paragraph, il faut fixer la
-        # taille explicitement via la balise <font size='...'> pour qu'elle
-        # soit réellement prise en compte (sinon l'en-tête reste à ~10pt).
         data = [[
             Paragraph(f"<font size='{FONT_SIZE}'><b>{label}</b></font>", getSampleStyleSheet()["BodyText"])
             for label, _ in columns
@@ -507,7 +720,8 @@ class AgentEdition:
         col_width = width / len(columns)
         table = Table(data, colWidths=[col_width] * len(columns), repeatRows=1)
         table.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, 0), colors.white),
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#2c3e50")),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
             ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
             ("FONTSIZE", (0, 0), (-1, -1), FONT_SIZE),
             ("LEADING", (0, 0), (-1, -1), LEADING),
@@ -534,7 +748,8 @@ class AgentEdition:
 
         if not debits.empty:
             hydrogramme_path = self.generer_hydrogramme_annuel(debits, code_station, nom_station)
-            hydrogramme_crue_path = self._plot_hydrogramme_crue(debits, stats_row, code_station)
+        if not crues.empty:
+            hydrogramme_crue_path = self._plot_hydrogramme_crue_principale(crues, code_station, nom_station)
 
         return {
             "code_station": code_station,
@@ -548,28 +763,6 @@ class AgentEdition:
             "hydrogramme_path": hydrogramme_path,
         }
 
-    def generer_df_annuaire(self):
-        stations = self.get_stations()
-        rapports = []
-
-        for index, station in stations.iterrows():
-            code = station["code_station"]
-            nom = station["nom"]
-            stats = self.get_statistiques(code)
-
-            if stats.empty:
-                continue
-
-            rapports.append({
-                "code_station": code,
-                "nom_station": nom,
-                "caracteristiques_hydrometriques": stats.iloc[0].to_dict(),
-                "tableau_debits_moyens_journaliers": self.get_tableau_debits_moyens_journaliers(code),
-                "crues": self.get_crues(code),
-            })
-
-        return pd.DataFrame(rapports)
-    
     def generer_hydrogramme_annuel(self, df_debits, code_station, nom_station):
         if df_debits.empty:
             return None
@@ -581,7 +774,7 @@ class AgentEdition:
         ax.axhline(y=moyenne, color='#27ae60', linestyle='--', label=f'Moyenne: {moyenne:.2f} m³/s')
         
         ax.set_xlabel('Mois')
-        ax.set_ylabel('Débit (m³/s)')
+        ax.set_ylabel('Debit (m³/s)')
         ax.set_title(f'Hydrogramme annuel - {nom_station} ({self.annee})')
         ax.xaxis.set_major_formatter(mdates.DateFormatter('%b'))
         ax.xaxis.set_major_locator(mdates.MonthLocator())
@@ -595,15 +788,97 @@ class AgentEdition:
         return filename
     
     def generer_pdf(self):
-        print("\n📄 GÉNÉRATION DE L'ANNUAIRE PDF")
+        print("\nGENERATION DE L'ANNUAIRE PDF")
         
-        stations = self.get_stations()
-        print(f"🏛️ {len(stations)} stations à traiter")
+        # Récupérer les stations avec leur gouvernorat
+        df_stations = self.get_stations_with_gouvernorat()
+        print(f"{len(df_stations)} stations a traiter")
+        
+        # Grouper par gouvernorat
+        stations_by_gouv = {}
+        for _, row in df_stations.iterrows():
+            gouv = row.get('gouvernorat', 'Inconnu')
+            if gouv and gouv != 'Inconnu':
+                # Nettoyer le nom du gouvernorat
+                gouv = gouv.upper().strip()
+                # Standardiser les noms
+                if "ARIANA" in gouv:
+                    gouv = "L'ARIANA"
+                elif "MANOUBA" in gouv:
+                    gouv = "MANOUBA"
+                elif "BIZERTE" in gouv:
+                    gouv = "BIZERTE"
+                elif "BEJA" in gouv:
+                    gouv = "BEJA"
+                elif "JENDOUBA" in gouv:
+                    gouv = "JENDOUBA"
+                elif "KEF" in gouv:
+                    gouv = "KEF"
+                elif "SILIANA" in gouv:
+                    gouv = "SILIANA"
+                elif "BEN AROUS" in gouv:
+                    gouv = "BEN AROUS"
+                elif "NABEUL" in gouv:
+                    gouv = "NABEUL"
+                elif "ZAGHOUAN" in gouv:
+                    gouv = "ZAGHOUAN"
+                elif "KAIROUAN" in gouv:
+                    gouv = "KAIROUAN"
+                elif "KASSERINE" in gouv:
+                    gouv = "KASSERINE"
+                elif "SIDI BOUZID" in gouv:
+                    gouv = "SIDI BOUZID"
+                elif "SOUSSE" in gouv:
+                    gouv = "SOUSSE"
+                elif "MONASTIR" in gouv:
+                    gouv = "MONASTIR"
+                elif "MAHDIA" in gouv:
+                    gouv = "MAHDIA"
+                elif "SFAX" in gouv:
+                    gouv = "SFAX"
+                elif "GAFSA" in gouv:
+                    gouv = "GAFSA"
+                elif "GABES" in gouv:
+                    gouv = "GABES"
+                elif "KEBILI" in gouv:
+                    gouv = "KEBILI"
+                elif "TOZEUR" in gouv:
+                    gouv = "TOZEUR"
+                elif "MEDENINE" in gouv:
+                    gouv = "MEDENINE"
+                elif "TATAOUINE" in gouv:
+                    gouv = "TATAOUINE"
+                
+                if gouv not in stations_by_gouv:
+                    stations_by_gouv[gouv] = []
+                stations_by_gouv[gouv].append(row)
+        
+        # Si des stations n'ont pas de gouvernorat, les mettre dans "AUTRES"
+        if df_stations[df_stations['gouvernorat'].isna() | (df_stations['gouvernorat'] == '')].shape[0] > 0:
+            stations_by_gouv["AUTRES"] = []
+            for _, row in df_stations[df_stations['gouvernorat'].isna() | (df_stations['gouvernorat'] == '')].iterrows():
+                stations_by_gouv["AUTRES"].append(row)
+        
+        # Trier les gouvernorats selon l'ordre défini
+        gouv_order = [g for g in GOUVERNORATS_ORDER if g in stations_by_gouv]
+        # Ajouter les gouvernorats non listés à la fin
+        for g in sorted(stations_by_gouv.keys()):
+            if g not in gouv_order and g != "AUTRES":
+                gouv_order.append(g)
+        if "AUTRES" in stations_by_gouv:
+            gouv_order.append("AUTRES")
         
         filename = os.path.join(self.output_dir, f"annuaire_hydrometrique_{self.annee}.pdf")
-        doc = SimpleDocTemplate(filename, pagesize=A4, 
-                                rightMargin=2*cm, leftMargin=2*cm,
-                                topMargin=2*cm, bottomMargin=2*cm)
+        
+        doc = HeaderFooterDocTemplate(
+            filename,
+            pagesize=A4,
+            rightMargin=1.5*cm,
+            leftMargin=1.5*cm,
+            topMargin=2.8*cm,
+            bottomMargin=2.2*cm
+        )
+        doc.annee = f"{self.annee}-{self.annee+1}"
         
         styles = getSampleStyleSheet()
         styles.add(ParagraphStyle(name='CustomTitle', parent=styles['Title'], 
@@ -613,112 +888,194 @@ class AgentEdition:
         styles.add(ParagraphStyle(name='CustomBody', parent=styles['Normal'], 
                                   fontSize=10, spaceAfter=6))
         styles.add(ParagraphStyle(name='SectionTitle', parent=styles['Normal'], fontSize=9, leading=10, spaceAfter=2))
+        styles.add(ParagraphStyle(name='GouvTitle', parent=styles['Heading1'], 
+                                  fontSize=16, alignment=TA_CENTER, spaceBefore=30, spaceAfter=20))
         
         elements = []
         
         # Page de garde
-        elements.append(Paragraph("RÉPUBLIQUE TUNISIENNE", styles['CustomTitle']))
+        elements.append(Paragraph("REPUBLIQUE TUNISIENNE", styles['CustomTitle']))
         elements.append(Spacer(1, 0.3*cm))
-        elements.append(Paragraph("Ministère de l'Agriculture, des Ressources Hydrauliques et de la Pêche", styles['CustomTitle']))
-        elements.append(Paragraph("Direction Générale des Ressources en Eau", styles['CustomTitle']))
+        elements.append(Paragraph("Ministere de l'Agriculture, des Ressources Hydrauliques et de la Peche", styles['CustomTitle']))
+        elements.append(Paragraph("Direction Generale des Ressources en Eau", styles['CustomTitle']))
         elements.append(Spacer(1, 2*cm))
-        elements.append(Paragraph(f"ANNUAIRE HYDROMÉTRIQUE {self.annee}", styles['CustomTitle']))
+        elements.append(Paragraph(f"ANNUAIRE HYDROMETRIQUE {self.annee}-{self.annee+1}", styles['CustomTitle']))
         elements.append(Spacer(1, 1*cm))
-        elements.append(Paragraph(f"Généré le {datetime.now().strftime('%d/%m/%Y %H:%M')}", styles['CustomBody']))
+        elements.append(Paragraph(f"Genere le {datetime.now().strftime('%d/%m/%Y %H:%M')}", styles['CustomBody']))
         elements.append(PageBreak())
         
         # Introduction
         elements.append(Paragraph("INTRODUCTION", styles['CustomHeading']))
         elements.append(Paragraph(
-            f"Le présent annuaire présente les résultats des observations hydrométriques "
-            f"de l'année hydrologique {self.annee}. Il a été généré automatiquement par la "
-            f"plateforme Agentic AI de la DGRE.",
+            f"Le present annuaire presente les resultats des observations hydrometriques "
+            f"de l'annee hydrologique {self.annee}-{self.annee+1}. Il a ete genere "
+            f"automatiquement par la plateforme Agentic AI de la DGRE.",
+            styles['CustomBody']
+        ))
+        elements.append(Paragraph(
+            "Les stations sont organisees par gouvernorat conformement a la structure "
+            "de l'annuaire hydrologique officiel.",
             styles['CustomBody']
         ))
         elements.append(PageBreak())
         
-        # Traiter chaque station
-        for position, (_, station) in enumerate(stations.iterrows()):
-            code = station['code_station']
-            nom = station['nom']
+        # Traiter chaque gouvernorat
+        total_stations = 0
+        for gouv_idx, gouv in enumerate(gouv_order):
+            stations = stations_by_gouv[gouv]
+            print(f"\nGouvernorat: {gouv} ({len(stations)} stations)")
             
-            print(f"📊 {nom} ({code})")
+            # Page de présentation du gouvernorat
+            doc.gouvernorat = gouv
+            doc.station_name = ""
             
-            report_data = self.build_station_report_data(code, nom)
-            stats = report_data["caracteristiques_hydrometriques"]
-            tableau_debits = report_data["tableau_debits_moyens_journaliers"]
-            crues = report_data["crues"]
-            etalonnage_path = report_data["etalonnage_path"]
-            hydrogramme_crue_path = report_data["hydrogramme_crue_path"]
-            img_path = report_data["hydrogramme_path"]
+            gouv_title = Paragraph(f"GOUVERNORAT DE {gouv}", styles['GouvTitle'])
+            elements.append(gouv_title)
+            elements.append(Spacer(1, 0.5*cm))
             
-            if not stats:
-                continue
+            # Liste des stations du gouvernorat
+            station_list = []
+            for i, station in enumerate(stations, 1):
+                code = station['code_station']
+                nom = station['nom']
+                station_list.append(Paragraph(f"{i}. {nom} - {code}", styles['CustomBody']))
             
-            station_title = Paragraph(f"<b>Station : {nom} - {code}</b>", styles['CustomHeading'])
-            section_1 = self._station_info_table(code, nom, font_size=6)
-
-            tableau_debits_display = self._daily_table_with_summary(tableau_debits)
-            section_3_table = self.dataframe_to_table(tableau_debits_display, font_size=4.8)
-            if section_3_table is None:
-                section_3_table = Paragraph("Tableau des débits moyens journaliers non disponible", styles['SectionTitle'])
-            section_3 = Table([[Paragraph("<b>3/ Débits moyens journaliers :</b>", styles['SectionTitle'])], [section_3_table]], colWidths=[10.8*cm])
-            section_3.setStyle(TableStyle([("BOX", (0, 0), (-1, -1), 0.8, colors.black), ("VALIGN", (0, 0), (-1, -1), "TOP")]))
-
-            etalonnage_elements = [Paragraph("<b>2/ Etalonnage de la station :</b>", styles['SectionTitle']), Paragraph("Valide du 01/01/2012 jusqu'à nos jours", styles['SectionTitle'])]
-            if etalonnage_path:
-                etalonnage_img = self._safe_image(etalonnage_path, width=5.8*cm, height=4.2*cm)
-                if etalonnage_img:
-                    etalonnage_elements.append(etalonnage_img)
-            else:
-                etalonnage_elements.append(Paragraph("Courbe d'étalonnage non disponible", styles['SectionTitle']))
-            section_2 = Table([[item] for item in etalonnage_elements], colWidths=[5.9*cm])
-            section_2.setStyle(TableStyle([("BOX", (0, 0), (-1, -1), 0.8, colors.black), ("VALIGN", (0, 0), (-1, -1), "TOP")]))
-
-            top_panel = Table([[section_2, section_3]], colWidths=[6.2*cm, 10.1*cm], hAlign="LEFT")
-            top_panel.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP")]))
-
-            caracs_rows = [
-                ["Débit moyen annuel", f"{stats['debit_moyen']:.2f} m³/s"],
-                ["Volume Total écoulé à la station", f"{stats['volume_total_hm3']:.2f} Hm³"],
-                ["Hauteur de la lame d'eau écoulée", f"{stats['lame_ecoulee_mm']:.1f} mm" if pd.notna(stats.get('lame_ecoulee_mm')) else ""],
-            ]
-            section_4 = self._section_table("4/Caractéristiques hydrométriques de la station:", caracs_rows, col_widths=(7.2*cm, 8.7*cm), font_size=8)
-
-            crues_table = self._crues_table(crues)
-            section_5_title = Paragraph("<b>5/Caractéristiques des crues</b>", styles['SectionTitle'])
-            if crues_table is None:
-                crues_table = Paragraph("Aucune crue détectée", styles['SectionTitle'])
-
-            hydro_crue_img = self._safe_image(hydrogramme_crue_path, width=8.7*cm, height=6.0*cm)
-            if hydro_crue_img is None:
-                hydro_crue_img = Paragraph("Hydrogramme de crue non disponible", styles['SectionTitle'])
-
-            hydro_annuel_img = self._safe_image(img_path, width=14.7*cm, height=7.2*cm)
-            if hydro_annuel_img is None:
-                hydro_annuel_img = Paragraph("Hydrogramme annuel non disponible", styles['SectionTitle'])
-
-            page1 = [station_title, Spacer(1, 0.12*cm), section_1, Spacer(1, 0.12*cm), top_panel, Spacer(1, 0.12*cm), section_4]
-            elements.extend(page1)
+            for item in station_list:
+                elements.append(item)
+            
             elements.append(PageBreak())
+            
+            # Traiter chaque station du gouvernorat
+            for station in stations:
+                code = station['code_station']
+                nom = station['nom']
+                total_stations += 1
+                
+                print(f"  Station: {nom} ({code})")
+                
+                # Réinitialiser le nom de la station pour l'en-tête
+                doc.station_name = f"Station : {nom} - {code}"
+                doc.gouvernorat = gouv
+                
+                report_data = self.build_station_report_data(code, nom)
+                stats = report_data["caracteristiques_hydrometriques"]
+                tableau_debits = report_data["tableau_debits_moyens_journaliers"]
+                crues = report_data["crues"]
+                etalonnage_path = report_data["etalonnage_path"]
+                hydrogramme_crue_path = report_data["hydrogramme_crue_path"]
+                img_path = report_data["hydrogramme_path"]
+                
+                if not stats:
+                    print(f"     Statistiques manquantes")
+                    continue
+                
+                # ===== PAGE DE LA STATION =====
+                station_title = Paragraph(f"<b>Station : {nom} - {code}</b>", styles['CustomHeading'])
+                section_1 = self._station_info_table(code, nom, font_size=6)
 
-            page2 = [
-                section_5_title,
-                crues_table,
-                Spacer(1, 0.15*cm),
-                Paragraph("6/Hydrogramme de crue", styles['CustomHeading']),
-                hydro_crue_img,
-                Spacer(1, 0.15*cm),
-                Paragraph("7/Hydrogramme annuel", styles['CustomHeading']),
-                hydro_annuel_img,
-            ]
-            elements.extend(page2)
-            if position < len(stations) - 1:
+                # Etalonnage (gauche)
+                etalonnage_elements = [
+                    Paragraph("<b>2/ Etalonnage de la station :</b>", styles['SectionTitle']),
+                    Paragraph("Valide du 01/01/2012 jusqu'a nos jours", styles['SectionTitle'])
+                ]
+                if etalonnage_path:
+                    etalonnage_img = self._safe_image(etalonnage_path, width=5.8*cm, height=4.2*cm)
+                    if etalonnage_img:
+                        etalonnage_elements.append(etalonnage_img)
+                else:
+                    etalonnage_elements.append(Paragraph("Courbe d'etalonnage non disponible", styles['SectionTitle']))
+                section_2 = Table([[item] for item in etalonnage_elements], colWidths=[5.9*cm])
+                section_2.setStyle(TableStyle([("BOX", (0, 0), (-1, -1), 0.8, colors.black), ("VALIGN", (0, 0), (-1, -1), "TOP")]))
+
+                # Débits journaliers (droite)
+                # section_3's outer box must match the top_panel column width
+                # below (this mismatch -- 10.8cm here vs 10.1cm in top_panel --
+                # was the cause of the LayoutError).
+                SECTION_3_WIDTH = 10.1 * cm
+                tableau_debits_display = self._daily_table_with_summary(tableau_debits)
+                section_3_table = self.dataframe_to_table(
+                    tableau_debits_display, font_size=4.5, total_width=SECTION_3_WIDTH - 0.2 * cm
+                )
+                if section_3_table is None:
+                    section_3_table = Paragraph("Tableau des debits moyens journaliers non disponible", styles['SectionTitle'])
+
+                section_3_content = [Paragraph("<b>3/ Debits moyens journaliers :</b>", styles['SectionTitle']), section_3_table]
+                extremes_lines = self._extremes_lines(stats)
+                if extremes_lines:
+                    section_3_content.append(Spacer(1, 0.1 * cm))
+                    section_3_content.extend(extremes_lines)
+
+                section_3 = Table([[item] for item in section_3_content], colWidths=[SECTION_3_WIDTH])
+                section_3.setStyle(TableStyle([("BOX", (0, 0), (-1, -1), 0.8, colors.black), ("VALIGN", (0, 0), (-1, -1), "TOP")]))
+
+                top_panel = Table([[section_2, section_3]], colWidths=[6.2*cm, SECTION_3_WIDTH], hAlign="LEFT")
+                top_panel.setStyle(TableStyle([
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                    # Zero out the default 6pt cell padding: section_2/section_3
+                    # are declared at exactly this column's width, so any
+                    # leftover padding here would make them wider than the
+                    # space actually available and re-trigger the LayoutError.
+                    ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                    ("TOPPADDING", (0, 0), (-1, -1), 0),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+                ]))
+
+                # Caracteristiques
+                caracs_rows = [
+                    ["Debit moyen annuel", f"{stats['debit_moyen']:.2f} m³/s" if pd.notna(stats.get('debit_moyen')) else ""],
+                    ["Volume Total ecoule a la station", f"{stats['volume_total_hm3']:.2f} Hm³" if pd.notna(stats.get('volume_total_hm3')) else ""],
+                    ["Hauteur de la lame d'eau ecoulee", f"{stats['lame_ecoulee_mm']:.1f} mm" if pd.notna(stats.get('lame_ecoulee_mm')) else ""],
+                ]
+                section_4 = self._section_table("4/Caracteristiques hydrometriques de la station:", caracs_rows, col_widths=(7.2*cm, 8.7*cm), font_size=8)
+
+                page1 = [
+                    station_title, 
+                    Spacer(1, 0.1*cm), 
+                    section_1,
+                    Spacer(1, 0.1*cm), 
+                    top_panel,
+                    Spacer(1, 0.1*cm), 
+                    section_4
+                ]
+                elements.extend(page1)
                 elements.append(PageBreak())
+
+                # ===== PAGE 2 =====
+                crues_table = self._crues_table(crues)
+                section_5_title = Paragraph("<b>5/Caracteristiques des crues</b>", styles['SectionTitle'])
+                if crues_table is None:
+                    crues_table = Paragraph("Aucune crue detectee", styles['SectionTitle'])
+
+                hydro_crue_img = self._safe_image(hydrogramme_crue_path, width=8.7*cm, height=6.0*cm)
+                if hydro_crue_img is None:
+                    hydro_crue_img = Paragraph("Hydrogramme de crue non disponible", styles['SectionTitle'])
+
+                hydro_annuel_img = self._safe_image(img_path, width=14.7*cm, height=7.2*cm)
+                if hydro_annuel_img is None:
+                    hydro_annuel_img = Paragraph("Hydrogramme annuel non disponible", styles['SectionTitle'])
+
+                page2 = [
+                    section_5_title,
+                    crues_table,
+                    Spacer(1, 0.15*cm),
+                    Paragraph("6/Hydrogramme de crue", styles['CustomHeading']),
+                    hydro_crue_img,
+                    Spacer(1, 0.15*cm),
+                    Paragraph("7/Hydrogramme annuel", styles['CustomHeading']),
+                    hydro_annuel_img,
+                ]
+                elements.extend(page2)
+                
+                # Ajouter une page de séparation entre les stations (sauf la dernière)
+                if total_stations < len(df_stations):
+                    elements.append(PageBreak())
         
         doc.build(elements)
-        print(f"✅ PDF généré : {filename}")
+        print(f"\nPDF genere : {filename}")
+        print(f"Total: {total_stations} stations traitees sur {len(df_stations)}")
         return filename
+
 
 if __name__ == "__main__":
     agent = AgentEdition(annee=2019)
