@@ -29,31 +29,32 @@ class AgentOrchestrator:
             'password': 'postgres'
         }
         self.agents = {}
-        self._init_agents()
         print("✅ Agent Orchestrateur initialisé")
-    
-    def _init_agents(self):
-        """Initialise tous les agents"""
-        try:
+
+    def _get_agent(self, name):
+        """Charge un agent à la demande et le réutilise ensuite (au lieu
+        d'ouvrir une nouvelle connexion PostgreSQL à chaque appel)."""
+        return self.get_agent(name)
+
+    def get_agent(self, name):
+        if name in self.agents:
+            return self.agents[name]
+
+        if name == 'calcul':
             from agents.agent_calcul import AgentCalcul
-            self.agents['calcul'] = AgentCalcul(self.db_config)
-            print("✅ AgentCalcul chargé")
-        except Exception as e:
-            print(f"⚠️ AgentCalcul non disponible: {e}")
-        
-        try:
+            agent = AgentCalcul(self.db_config)
+        elif name == 'edition':
             from agents.agent_edition import AgentEdition
-            self.agents['edition'] = AgentEdition(self.db_config)
-            print("✅ AgentEdition chargé")
-        except Exception as e:
-            print(f"⚠️ AgentEdition non disponible: {e}")
-        
-        try:
+            agent = AgentEdition(self.db_config)
+        elif name == 'rag':
             from agents.agent_rag import AgentRAGOrchestrator
-            self.agents['rag'] = AgentRAGOrchestrator(self.db_config)
-            print("✅ AgentRAG chargé")
-        except Exception as e:
-            print(f"⚠️ AgentRAG non disponible: {e}")
+            agent = AgentRAGOrchestrator(self.db_config)
+        else:
+            raise ValueError(f"Agent inconnu : {name}")
+
+        self.agents[name] = agent
+        print(f"✅ Agent{name.capitalize()} chargé")
+        return agent
     
     def close(self):
         """Ferme tous les agents"""
@@ -189,30 +190,21 @@ class AgentOrchestrator:
     def _handle_generation(self, intent):
         """Gère la génération de l'annuaire PDF"""
         annee = intent['params'].get('annee', 2019)
-        
+
         try:
-            from agents.agent_edition import AgentEdition
-            
             print(f"📄 Génération de l'annuaire {annee}...")
-            
-            agent = AgentEdition(
-                annee=annee,
-                output_dir="output/pdf/",
-                db_config=self.db_config
-            )
-            
-            try:
-                pdf_path = agent.generer_pdf()
-                return {
-                    'status': 'success',
-                    'type': 'generation',
-                    'message': f"✅ Annuaire {annee}-{annee+1} généré avec succès !",
-                    'pdf_path': pdf_path,
-                    'annee': annee
-                }
-            finally:
-                agent.close()
-                
+            agent = self._get_agent('edition')
+            agent.annee = annee  # l'agent est réutilisé ; on met à jour l'année ciblée
+
+            pdf_path = agent.generer_pdf()
+            return {
+                'status': 'success',
+                'type': 'generation',
+                'message': f"✅ Annuaire {annee}-{annee+1} généré avec succès !",
+                'pdf_path': pdf_path,
+                'annee': annee
+            }
+
         except Exception as e:
             return {
                 'status': 'error',
@@ -223,23 +215,17 @@ class AgentOrchestrator:
     def _handle_question(self, intent, user_input):
         """Gère les questions de l'utilisateur"""
         try:
-            from agents.agent_rag import AgentRAGOrchestrator
-            
             print(f"🤖 Traitement de la question...")
-            
-            rag = AgentRAGOrchestrator(self.db_config)
-            try:
-                answer = rag.answer(user_input)
-                return {
-                    'status': 'success',
-                    'type': 'question',
-                    'subtype': intent['subtype'],
-                    'message': answer,
-                    'answer': answer
-                }
-            finally:
-                rag.close()
-                
+            rag = self._get_agent('rag')
+            answer = rag.answer(user_input)
+            return {
+                'status': 'success',
+                'type': 'question',
+                'subtype': intent['subtype'],
+                'message': answer,
+                'answer': answer
+            }
+
         except Exception as e:
             return {
                 'status': 'error',
