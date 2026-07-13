@@ -17,7 +17,7 @@ import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import cm
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak, Image, Table, TableStyle, Frame, PageTemplate, BaseDocTemplate
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak, Image, Table, TableStyle, Frame, PageTemplate, BaseDocTemplate, KeepTogether
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER, TA_RIGHT, TA_LEFT
@@ -110,6 +110,38 @@ class HeaderFooterDocTemplate(BaseDocTemplate):
     # incremente deja doc.page correctement a chaque saut de page ;
     # le faire en plus dans afterFlowable() (appele apres CHAQUE flowable,
     # pas juste a chaque page) faussait completement la numerotation.
+
+
+# Situation geographique reelle des gouvernorats (limites administratives et
+# superficie officielle). Donnees de geographie generale, stables dans le
+# temps (pas issues de la base de donnees hydrometrique) : a reverifier
+# ponctuellement contre une source officielle (INS/CGDR) si une precision
+# exacte est requise pour publication.
+GOUVERNORAT_GEO_INFO = {
+    "L'ARIANA": {"region": "Nord-Est", "nord": "le gouvernorat de Bizerte", "est": "la Méditerranée", "sud": "le gouvernorat de Tunis", "ouest": "le gouvernorat de la Manouba", "superficie_km2": 458},
+    "MANOUBA": {"region": "Nord-Est", "nord": "le gouvernorat de Bizerte", "est": "les gouvernorats de l'Ariana et de Tunis", "sud": "le gouvernorat de Ben Arous", "ouest": "le gouvernorat de Béja", "superficie_km2": 1137},
+    "BIZERTE": {"region": "Nord", "nord": "la Méditerranée", "est": "la Méditerranée", "sud": "les gouvernorats de l'Ariana, de la Manouba et de Béja", "ouest": "la Méditerranée", "superficie_km2": 3685},
+    "BEJA": {"region": "Nord-Ouest", "nord": "le gouvernorat de Bizerte et la mer Méditerranée", "est": "le gouvernorat de la Manouba", "sud": "les gouvernorats de Zaghouan et de Siliana", "ouest": "le gouvernorat de Jendouba", "superficie_km2": 3746},
+    "JENDOUBA": {"region": "Nord-Ouest", "nord": "le gouvernorat de Béja", "est": "les gouvernorats de Béja et de Siliana", "sud": "le gouvernorat du Kef", "ouest": "l'Algérie", "superficie_km2": 3102},
+    "KEF": {"region": "Nord-Ouest", "nord": "le gouvernorat de Jendouba", "est": "le gouvernorat de Siliana", "sud": "le gouvernorat de Kasserine", "ouest": "l'Algérie", "superficie_km2": 4965},
+    "SILIANA": {"region": "Nord-Ouest", "nord": "les gouvernorats de Béja et Zaghouan", "est": "les gouvernorats de Zaghouan et Kairouan", "sud": "les gouvernorats de Kairouan et Kasserine", "ouest": "le gouvernorat du Kef", "superficie_km2": 4631},
+    "BEN AROUS": {"region": "Nord-Est", "nord": "le gouvernorat de Tunis", "est": "la Méditerranée (golfe de Tunis)", "sud": "les gouvernorats de Nabeul et Zaghouan", "ouest": "les gouvernorats de Zaghouan et de la Manouba", "superficie_km2": 761},
+    "NABEUL": {"region": "Nord-Est", "nord": "la Méditerranée", "est": "la Méditerranée", "sud": "le golfe de Hammamet", "ouest": "les gouvernorats de Ben Arous et de Zaghouan", "superficie_km2": 2822},
+    "ZAGHOUAN": {"region": "Nord-Est", "nord": "les gouvernorats de Ben Arous et de la Manouba", "est": "le gouvernorat de Nabeul", "sud": "les gouvernorats de Sousse et de Kairouan", "ouest": "les gouvernorats de Béja et de Siliana", "superficie_km2": 2820},
+    "KAIROUAN": {"region": "Centre", "nord": "les gouvernorats de Siliana et de Zaghouan", "est": "les gouvernorats de Sousse et de Mahdia", "sud": "le gouvernorat de Sidi Bouzid", "ouest": "le gouvernorat de Kasserine", "superficie_km2": 6712},
+    "KASSERINE": {"region": "Centre-Ouest", "nord": "les gouvernorats du Kef et de Siliana", "est": "les gouvernorats de Kairouan et de Sidi Bouzid", "sud": "le gouvernorat de Sidi Bouzid", "ouest": "l'Algérie", "superficie_km2": 8066},
+    "SIDI BOUZID": {"region": "Centre", "nord": "le gouvernorat de Kairouan", "est": "les gouvernorats de Mahdia et de Sfax", "sud": "les gouvernorats de Gafsa et de Gabès", "ouest": "le gouvernorat de Kasserine", "superficie_km2": 6994},
+    "SOUSSE": {"region": "Centre-Est", "nord": "les gouvernorats de Nabeul et de Zaghouan", "est": "la Méditerranée", "sud": "le gouvernorat de Monastir", "ouest": "le gouvernorat de Kairouan", "superficie_km2": 2669},
+    "MONASTIR": {"region": "Centre-Est", "nord": "le gouvernorat de Sousse", "est": "la Méditerranée", "sud": "la Méditerranée et le gouvernorat de Mahdia", "ouest": "le gouvernorat de Mahdia", "superficie_km2": 1019},
+    "MAHDIA": {"region": "Centre-Est", "nord": "les gouvernorats de Monastir et de Sousse", "est": "la Méditerranée", "sud": "le gouvernorat de Sfax", "ouest": "les gouvernorats de Kairouan et de Sidi Bouzid", "superficie_km2": 2966},
+    "SFAX": {"region": "Centre-Est", "nord": "les gouvernorats de Mahdia et de Sidi Bouzid", "est": "la Méditerranée", "sud": "le gouvernorat de Gabès", "ouest": "les gouvernorats de Sidi Bouzid et de Gafsa", "superficie_km2": 7545},
+    "GAFSA": {"region": "Sud-Ouest", "nord": "les gouvernorats de Sidi Bouzid et Kasserine", "est": "les gouvernorats de Sfax et de Gabès", "sud": "les gouvernorats de Tozeur et de Kébili", "ouest": "l'Algérie", "superficie_km2": 7807},
+    "GABES": {"region": "Sud-Est", "nord": "les gouvernorats de Sfax et de Sidi Bouzid", "est": "la Méditerranée", "sud": "le gouvernorat de Médenine", "ouest": "le gouvernorat de Kébili", "superficie_km2": 7166},
+    "KEBILI": {"region": "Sud-Ouest", "nord": "les gouvernorats de Gafsa et de Sidi Bouzid", "est": "les gouvernorats de Gabès et de Médenine", "sud": "l'Algérie et le gouvernorat de Tataouine", "ouest": "les gouvernorats de Tozeur et l'Algérie", "superficie_km2": 22454},
+    "TOZEUR": {"region": "Sud-Ouest", "nord": "le gouvernorat de Gafsa", "est": "le gouvernorat de Kébili", "sud": "l'Algérie", "ouest": "l'Algérie", "superficie_km2": 4719},
+    "MEDENINE": {"region": "Sud-Est", "nord": "le gouvernorat de Gabès", "est": "la Méditerranée", "sud": "le gouvernorat de Tataouine", "ouest": "le gouvernorat de Kébili", "superficie_km2": 8588},
+    "TATAOUINE": {"region": "Sud-Est", "nord": "le gouvernorat de Médenine", "est": "la Libye", "sud": "l'Algérie et la Libye", "ouest": "les gouvernorats de Kébili et l'Algérie", "superficie_km2": 38889},
+}
 
 
 def normaliser_gouvernorat(gouv):
@@ -423,6 +455,17 @@ class AgentEdition:
             ("ALIGN", (0, 0), (-1, -1), "CENTER"),
             ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
             ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.whitesmoke, colors.lightgrey]),
+            # Sans ceci, ReportLab applique un padding par defaut (6pt en
+            # haut ET en bas de CHAQUE cellule) qui, multiplie par les 35
+            # lignes de ce tableau (31 jours + Moy/Min/Max), ajoutait a lui
+            # seul ~5cm de hauteur inutile -> c'est ce qui poussait
+            # "top_panel" hors de la page malgre le KeepTogether, et
+            # faisait atterrir la fiche de renseignements seule sur sa
+            # page pour certaines stations.
+            ("TOPPADDING", (0, 0), (-1, -1), 1),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 1),
+            ("LEFTPADDING", (0, 0), (-1, -1), 1),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 1),
         ]))
         return table
 
@@ -649,6 +692,8 @@ class AgentEdition:
         
         fig, ax = plt.subplots(figsize=(4.8, 3.1))
         ax.plot(serie["date_heure"], serie["debit_m3s"], color="#2e5aac", linewidth=1.0)
+        ax.set_xlim(serie["date_heure"].min(), serie["date_heure"].max())
+        ax.margins(x=0)
         
         date_pic = serie.loc[serie['debit_m3s'].idxmax(), 'date_heure']
         debit_pic = serie['debit_m3s'].max()
@@ -855,18 +900,32 @@ class AgentEdition:
         return filename
 
     def _situation_geographique_text(self, stations, gouv):
-        """Texte synthetique de situation geographique du gouvernorat,
-        genere a partir des donnees reellement disponibles (nombre de
-        stations, cours d'eau, secteurs hydrographiques concernes)."""
+        """Texte de situation geographique du gouvernorat, dans le style du
+        rapport manuel : region, limites administratives reelles, superficie
+        officielle (donnees geographiques statiques, voir
+        GOUVERNORAT_GEO_INFO). Si le gouvernorat n'est pas dans cette table
+        de reference, on retombe sur un texte generique base sur les
+        donnees de stations disponibles."""
+        geo = GOUVERNORAT_GEO_INFO.get(gouv)
+
+        if geo:
+            nom_complet = "de l'Ariana" if gouv == "L'ARIANA" else f"de {gouv.title()}"
+            phrase = (
+                f"Le gouvernorat {nom_complet} se situe au niveau de la région "
+                f"du {geo['region']} de la Tunisie. Il est limité au Nord par {geo['nord']}, à l'Est par {geo['est']}, "
+                f"au Sud par {geo['sud']} et à l'Ouest par {geo['ouest']}. "
+                f"Sa superficie totale est de {geo['superficie_km2']} km²."
+            )
+            return phrase
+
+        # Repli : pas de reference geographique statique pour ce gouvernorat
+        # (verifiez l'orthographe dans GOUVERNORAT_GEO_INFO) -> texte
+        # generique base sur les stations disponibles, comme avant.
         cours_eau_set = set()
-        secteurs_set = set()
         for station in stations:
             cours_eau = station.get('cours_eau')
-            secteur = station.get('bassin')
             if cours_eau and str(cours_eau) not in ("None", ""):
                 cours_eau_set.add(str(cours_eau))
-            if secteur and str(secteur) not in ("None", ""):
-                secteurs_set.add(str(secteur))
 
         phrases = [
             f"Le gouvernorat de {gouv} compte {len(stations)} station(s) hydrométrique(s) "
@@ -874,9 +933,6 @@ class AgentEdition:
         ]
         if cours_eau_set:
             phrases.append("Les cours d'eau concernés sont : " + ", ".join(sorted(cours_eau_set)) + ".")
-        if secteurs_set:
-            phrases.append("Secteur(s) hydrographique(s) : " + ", ".join(sorted(secteurs_set)) + ".")
-
         return " ".join(phrases)
 
     def _section_precipitations(self, gouv):
@@ -890,11 +946,66 @@ class AgentEdition:
         ressources de surface (non presente dans la base actuelle)."""
         return None
 
+    # Duree maximale (en jours) qu'on considere plausible pour UNE seule
+    # crue. Au-dela, la crue "detectee" en base melange presque surement
+    # plusieurs episodes ou une derive de calcul (temps de base delirant,
+    # dates de debut/fin incoherentes) : le trace resultant est illisible
+    # (plusieurs mois de bruit) plutot qu'un hydrogramme de crue exploitable.
+    DUREE_CRUE_MAX_JOURS = 10
+
+    def _crue_est_fiable(self, row):
+        """Renvoie False si la crue (ligne de `crues`) presente des valeurs
+        incoherentes ou une duree deraisonnable pour un seul evenement de
+        crue, auquel cas elle ne doit pas etre utilisee (ni pour le trace,
+        ni pour la considerer comme LA crue de reference de la station)."""
+        try:
+            debit_max = float(row.get("debit_max_m3s"))
+        except (TypeError, ValueError):
+            return False
+        if not np.isfinite(debit_max) or debit_max <= 0:
+            return False
+
+        date_debut = pd.to_datetime(row.get("date_debut"), errors="coerce")
+        date_fin = pd.to_datetime(row.get("date_fin"), errors="coerce")
+        if pd.isna(date_debut) or pd.isna(date_fin) or date_fin <= date_debut:
+            return False
+
+        duree_jours = (date_fin - date_debut).total_seconds() / 86400
+        if duree_jours > self.DUREE_CRUE_MAX_JOURS:
+            return False
+
+        temps_base_min = pd.to_numeric(row.get("temps_base_min"), errors="coerce")
+        if pd.notna(temps_base_min) and (temps_base_min / 1440) > self.DUREE_CRUE_MAX_JOURS:
+            return False
+
+        return True
+
+    def _filtrer_crues_fiables(self, crues_df, code_station=""):
+        """Ne garde, dans le tableau des crues ET pour le choix de la crue
+        de reference trace en 6/Hydrogramme de crue, que les evenements
+        dont la duree/les valeurs sont plausibles. Si la crue de debit
+        maximal n'est pas fiable, on considere qu'on n'a pas de crue
+        exploitable pour cette station cette annee-la (on retombe sur
+        'Pas de crue' plutot que d'afficher un calcul douteux)."""
+        if crues_df is None or crues_df.empty:
+            return crues_df
+
+        crues_df = crues_df.copy()
+        crues_df["debit_max_m3s"] = pd.to_numeric(crues_df["debit_max_m3s"], errors="coerce")
+        idx_max = crues_df["debit_max_m3s"].idxmax()
+        crue_max_row = crues_df.loc[idx_max]
+
+        if not self._crue_est_fiable(crue_max_row):
+            print(f"     Crue de {code_station} jugee non fiable (duree/valeurs incoherentes) -> 'Pas de crue'")
+            return crues_df.iloc[0:0]
+
+        return crues_df
+
     def build_station_report_data(self, code_station, nom_station):
         """Construit le rapport complet d'une station"""
         stats = self.get_statistiques(code_station)
         debits = self.get_debits_journaliers(code_station)
-        crues = self.get_crues(code_station)
+        crues = self._filtrer_crues_fiables(self.get_crues(code_station), code_station)
         tableau_debits = self.get_tableau_debits_moyens_journaliers(code_station)
         etalonnage_path = self._plot_courbe_etalonnage(code_station)
 
@@ -925,6 +1036,8 @@ class AgentEdition:
         
         fig, ax = plt.subplots(figsize=(14, 6))
         ax.plot(df_debits['jour'], df_debits['debit_moyen'], color='#1a5276', linewidth=1.5)
+        ax.set_xlim(df_debits['jour'].min(), df_debits['jour'].max())
+        ax.margins(x=0)
         
         moyenne = df_debits['debit_moyen'].mean()
         ax.axhline(y=moyenne, color='#27ae60', linestyle='--', label=f'Moyenne: {moyenne:.2f} m³/s')
@@ -1187,27 +1300,32 @@ class AgentEdition:
                 ]
                 section_4 = self._section_table("4/Caractéristiques hydrométriques de la station:", caracs_rows, col_widths=(7.2*cm, 8.7*cm), font_size=8)
 
-                page1 = [
-                    station_title, 
-                    Spacer(1, 0.1*cm), 
+                page1 = KeepTogether([
+                    station_title,
+                    Spacer(1, 0.1*cm),
                     section_1,
-                    Spacer(1, 0.1*cm), 
+                    Spacer(1, 0.1*cm),
                     top_panel,
-                    Spacer(1, 0.1*cm), 
+                    Spacer(1, 0.1*cm),
                     section_4
-                ]
-                elements.extend(page1)
+                ])
+                elements.append(page1)
                 elements.append(PageBreak())
 
                 # ===== PAGE 2 =====
                 crues_table = self._crues_table(crues)
                 section_5_title = Paragraph("<b>5/Caractéristiques des crues</b>", styles['SectionTitle'])
                 if crues_table is None:
-                    crues_table = Paragraph("Aucune crue détectée", styles['SectionTitle'])
+                    crues_table = Paragraph(
+                        "<para alignment='center'><b>Pas de crue</b></para>", styles['SectionTitle']
+                    )
 
                 hydro_crue_img = self._safe_image(hydrogramme_crue_path, width=8.7*cm, height=6.0*cm)
                 if hydro_crue_img is None:
-                    hydro_crue_img = Paragraph("Hydrogramme de crue non disponible", styles['SectionTitle'])
+                    # Pas de crue fiable pour cette station : on laisse la
+                    # section vide plutot que d'afficher un trace douteux
+                    # (voir _filtrer_crues_fiables / _crue_est_fiable).
+                    hydro_crue_img = Spacer(1, 0.1*cm)
 
                 hydro_annuel_img = self._safe_image(img_path, width=14.7*cm, height=7.2*cm)
                 if hydro_annuel_img is None:
@@ -1217,7 +1335,7 @@ class AgentEdition:
                     section_5_title,
                     crues_table,
                     Spacer(1, 0.15*cm),
-                    Paragraph("6/Hydrogramme de crue", styles['CustomHeading']),
+                    Paragraph("6/Hydrogramme de crue:", styles['CustomHeading']),
                     hydro_crue_img,
                     Spacer(1, 0.15*cm),
                     Paragraph("7/Hydrogramme annuel", styles['CustomHeading']),
