@@ -469,8 +469,13 @@ class AgentCalcul:
         segments = segments_valides
 
         if not segments:
-            peak_idx = int(df["debit_m3s"].idxmax())
-            segments = [(max(0, peak_idx - 1), min(len(df) - 1, peak_idx + 1))]
+            # Aucun episode ne satisfait a la fois la duree minimale ET la
+            # marge de depassement : c'est une annee sans crue significative
+            # pour cette station, pas une raison de fabriquer une fausse
+            # crue a partir du simple pic instantane maximum (ca produisait
+            # un micro-plateau trompeur, ex: 27.30 -> 27.55 m3/s sur 1h30,
+            # affiche comme "la plus grande crue de l'annee").
+            return pd.DataFrame()
 
         station_info = self.get_station_info(id_station)
         superficie = None

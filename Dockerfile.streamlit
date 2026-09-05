@@ -1,5 +1,5 @@
 # Dockerfile.streamlit
-FROM python:3.11-slim
+FROM python:3.11-slim-bookworm
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -8,8 +8,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 # Installer les dépendances système
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update -o Acquire::Retries=3 && apt-get install -y --no-install-recommends \
     libpq-dev \
+    libexpat1 \
     && rm -rf /var/lib/apt/lists/*
 
 # Installer les dépendances Python
@@ -25,4 +26,4 @@ RUN mkdir -p data output
 
 EXPOSE 8501
 
-CMD ["streamlit", "run", "src/app/main.py", "--server.port=8501", "--server.address=0.0.0.0"]
+CMD ["python", "-m", "streamlit", "run", "src/app/main.py", "--server.port=8501", "--server.address=0.0.0.0"]

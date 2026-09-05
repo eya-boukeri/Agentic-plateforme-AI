@@ -1,6 +1,6 @@
 # Dockerfile
 # Image de base Python 3.11 (stable)
-FROM python:3.11-slim
+FROM python:3.11-slim-bookworm
 
 # Variables d'environnement
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -13,7 +13,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 # Installer les dépendances système
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update -o Acquire::Retries=3 && apt-get install -y --no-install-recommends \
     gcc \
     libpq-dev \
     curl \

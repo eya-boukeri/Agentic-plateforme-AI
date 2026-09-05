@@ -85,6 +85,8 @@ services:
       postgres:
         condition: service_healthy
     environment:
+      STREAMLIT_SERVER_PORT: 8501
+      STREAMLIT_SERVER_ADDRESS: 0.0.0.0
       DB_HOST: postgres
       DB_PORT: 5432
       DB_NAME: ${POSTGRES_DB:-hydrometry}
@@ -95,6 +97,7 @@ services:
     ports:
       - "8501:8501"
     volumes:
+      - ./run_app_v64.ps1:/app/run_app_v64.ps1
       - ./src:/app/src
       - ./config:/app/config
       - ./output:/app/output

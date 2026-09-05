@@ -5,6 +5,10 @@ Agent RAG intelligent - Utilise le LLM pour comprendre toute question
 
 import sys
 import os
+
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8')
+
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from sqlalchemy import create_engine
@@ -19,6 +23,12 @@ try:
 except ImportError:
     print("⚠️ AgentLLM non disponible")
     AgentLLM = None
+
+try:
+    import zvec
+except ImportError:
+    print("⚠️ Bibliothèque zvec non disponible (installez-la via 'pip install zvec')")
+    zvec = None
 
 
 class AgentRAG:
@@ -51,13 +61,64 @@ class AgentRAG:
         self.llm = None
         if AgentLLM:
             try:
-                self.llm = AgentLLM(model="tinyllama")
+                self.llm = AgentLLM()  # lit LLM_MODEL / LLM_HOST depuis .env (mistral par défaut)
                 if not self.llm.available or not self.llm.model_loaded:
                     self.llm = None
                     print("ℹ️ Mode dégradé: compréhension par mots-clés uniquement")
             except Exception:
                 self.llm = None
                 print("ℹ️ Mode dégradé: compréhension par mots-clés uniquement")
+        
+        # Initialiser Zvec si disponible
+        self.zvec_db = None
+        if zvec:
+            try:
+                parent_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "data")
+                os.makedirs(parent_dir, exist_ok=True)
+                db_dir = os.path.join(parent_dir, "zvec_store")
+                
+                # Définir le schéma Zvec
+                schema = zvec.CollectionSchema(
+                    name="stations_semantic",
+                    fields=[
+                        zvec.FieldSchema(name="nom", data_type=zvec.DataType.STRING),
+                        zvec.FieldSchema(name="gouvernorat", data_type=zvec.DataType.STRING),
+                        zvec.FieldSchema(name="cours_eau", data_type=zvec.DataType.STRING),
+                    ],
+                    vectors=[
+                        zvec.VectorSchema(
+                            name="embedding",
+                            data_type=zvec.DataType.VECTOR_FP32,
+                            dimension=768, # Nomic embed dimension
+                            index_param=zvec.HnswIndexParam(metric_type=zvec.MetricType.COSINE)
+                        )
+                    ]
+                )
+                
+                # Charger la collection existante ou la créer
+                if os.path.exists(db_dir) and os.path.isdir(db_dir) and len(os.listdir(db_dir)) > 0:
+                    try:
+                        self.zvec_db = zvec.open(path=db_dir)
+                        print(f"✅ Zvec connecté (ouvert) dans {db_dir}")
+                    except Exception as e_open:
+                        print(f"ℹ️ Impossible d'ouvrir Zvec : {e_open}. Tentative de re-création...")
+                        self.zvec_db = zvec.create_and_open(path=db_dir, schema=schema)
+                        print(f"✅ Zvec connecté (créé) dans {db_dir}")
+                else:
+                    if os.path.exists(db_dir):
+                        try:
+                            if os.path.isdir(db_dir):
+                                os.rmdir(db_dir)
+                            else:
+                                os.remove(db_dir)
+                        except:
+                            pass
+                    self.zvec_db = zvec.create_and_open(path=db_dir, schema=schema)
+                    print(f"✅ Zvec connecté (créé) dans {db_dir}")
+            except Exception as e:
+                self.zvec_db = None
+                print(f"⚠️ Erreur lors de l'initialisation de Zvec : {e}")
+
 
     def _resolve_station_columns(self):
         """Découvre dynamiquement les colonnes de la table station"""
@@ -106,48 +167,40 @@ class AgentRAG:
         return resolved
 
     def _get_detailed_schema(self):
-        """Retourne un schéma détaillé de la base pour le prompt"""
-        return """
-Tables disponibles :
-
-1. station
-   - code_station : identifiant unique
-   - nom : nom de la station
-   - gouvernorat : gouvernorat (attention: PAS "gouvernoraat")
-   - cours_eau : cours d'eau
-   - superficie_km2 : superficie du bassin versant
-   - x_utm, y_utm : coordonnées UTM
-   - altitude : altitude
-
-2. statistiques_annuelles (ATTENTION: le nom est au pluriel)
-   - code_station : référence vers station
-   - annee : année hydrologique
-   - debit_moyen : débit moyen annuel (m³/s)
-   - debit_max_jour : débit maximum journalier
-   - debit_min_jour : débit minimum journalier
-   - debit_max_inst : débit maximum instantané
-   - debit_min_inst : débit minimum instantané
-   - volume_total_hm3 : volume total écoulé (Hm³)
-
-3. crues
-   - code_station : référence vers station
-   - annee : année
-   - date_debut : début de la crue
-   - date_fin : fin de la crue
-   - debit_max_m3s : débit maximum de la crue
-
-4. debits_journaliers
-   - code_station : référence vers station
-   - jour : date
-   - debit_moyen : débit moyen journalier
-   - debit_max : débit maximum journalier
-   - debit_min : débit minimum journalier
-
-Exemples de requêtes SQL :
+        """Retourne un schéma détaillé de la base généré dynamiquement pour le prompt"""
+        tables_info = self._get_tables_info()
+        if not tables_info:
+            return "Aucune table disponible."
+        
+        schema_desc = "Tables disponibles dans la base de données :\n\n"
+        for table_name, info in tables_info.items():
+            schema_desc += f"- Table: {table_name}\n"
+            schema_desc += "  Colonnes :\n"
+            for col in info.get('columns', []):
+                name = col.get('column_name')
+                dtype = col.get('data_type')
+                schema_desc += f"    * {name} ({dtype})\n"
+            
+            # Ajouter un échantillon de données pour aider le LLM à comprendre
+            sample = info.get('sample', [])
+            if sample:
+                schema_desc += "  Exemple de ligne :\n"
+                for row in sample[:1]:
+                    clean_row = {}
+                    for k, v in row.items():
+                        if isinstance(v, (datetime, pd.Timestamp)):
+                            clean_row[k] = v.isoformat()
+                        else:
+                            clean_row[k] = str(v) if v is not None else None
+                    schema_desc += f"    {json.dumps(clean_row, ensure_ascii=False)}\n"
+            schema_desc += "\n"
+        
+        # Conserver les exemples de requêtes SQL utiles pour guider le LLM
+        schema_desc += """Exemples de requêtes SQL de référence :
 - "Quel gouvernorat a le plus de stations ?"
   SELECT gouvernorat, COUNT(*) as nb_stations
   FROM station
-  WHERE gouvernorat IS NOT NULL
+  WHERE gouvernorat IS NOT NULL AND gouvernorat != ''
   GROUP BY gouvernorat
   ORDER BY nb_stations DESC LIMIT 1
 
@@ -157,6 +210,7 @@ Exemples de requêtes SQL :
   JOIN station s ON st.code_station = s.code_station
   ORDER BY st.debit_max_jour DESC LIMIT 1
 """
+        return schema_desc
 
     def _get_schema_info(self):
         """Récupère les informations sur toutes les tables"""
@@ -260,21 +314,30 @@ Exemples de requêtes SQL :
     def _execute_query(self, query, params=None):
         """Exécute une requête SQL et retourne les résultats"""
         try:
-            cache_key = f"{query}_{str(params)}"
-            if cache_key in self._cache:
-                return self._cache[cache_key]
-            
-            if params:
-                df = pd.read_sql(query, self.engine, params=params)
-            else:
-                df = pd.read_sql(query, self.engine)
-                
-            result = df.to_dict('records') if not df.empty else []
-            self._cache[cache_key] = result
-            return result
+            return self._execute_query_raising(query, params)
         except Exception as e:
             print(f"❌ Erreur SQL: {e}")
             return []
+
+    def _execute_query_raising(self, query, params=None):
+        """
+        Comme _execute_query mais propage les erreurs SQL au lieu de les
+        avaler. Utilisé quand l'appelant a besoin de savoir si la requête
+        (notamment celle générée par le LLM) est réellement valide, pour
+        pouvoir se rabattre sur une autre stratégie en cas d'échec.
+        """
+        cache_key = f"{query}_{str(params)}"
+        if cache_key in self._cache:
+            return self._cache[cache_key]
+
+        if params:
+            df = pd.read_sql(query, self.engine, params=params)
+        else:
+            df = pd.read_sql(query, self.engine)
+
+        result = df.to_dict('records') if not df.empty else []
+        self._cache[cache_key] = result
+        return result
 
     def _understand_with_llm(self, question):
         """Comprend la question avec le LLM + validation"""
@@ -303,6 +366,7 @@ Exemples de requêtes SQL :
                 SELECT s.nom, s.gouvernorat, st.debit_max_jour
                 FROM statistiques_annuelles st
                 JOIN station s ON st.code_station = s.code_station
+                WHERE st.debit_max_jour::text <> 'NaN'
                 ORDER BY st.debit_max_jour DESC
                 LIMIT 1
             """
@@ -380,15 +444,60 @@ Requête SQL :
         """Extrait la requête SQL du texte généré"""
         if not text:
             return None
+
+        # Les modèles renvoient souvent le SQL dans un bloc ```sql ... ``` :
+        # on le déballe avant de chercher le SELECT, sinon la regex peut
+        # capturer les ``` de fermeture ou du texte après le bloc.
+        fence_match = re.search(r'```(?:sql)?\s*(.*?)```', text, re.IGNORECASE | re.DOTALL)
+        if fence_match:
+            text = fence_match.group(1)
+
         # Chercher SELECT ... ; ou SELECT ...
         pattern = r'SELECT\s+.*?(?:;|$)'
         match = re.search(pattern, text, re.IGNORECASE | re.DOTALL)
-        if match:
-            sql = match.group(0).strip()
-            if sql.endswith(';'):
-                sql = sql[:-1]
-            return sql
-        return None
+        if not match:
+            return None
+
+        sql = match.group(0).strip()
+        if sql.endswith(';'):
+            sql = sql[:-1]
+
+        if not self._is_safe_select(sql):
+            print(f"⚠️ SQL généré par le LLM rejeté (non conforme) : {sql[:120]}...")
+            return None
+
+        return sql
+
+    def _is_safe_select(self, sql):
+        """
+        Garde-fou : le SQL généré par le LLM ne doit être qu'une unique
+        requête SELECT en lecture seule. On rejette tout ce qui contient
+        des mots-clés de modification/DDL ou plusieurs instructions,
+        pour éviter qu'une réponse mal formée (ou halluciné) du LLM
+        n'exécute autre chose qu'une lecture sur la base.
+        """
+        if not sql:
+            return False
+
+        normalized = sql.strip().rstrip(';').strip()
+        if not re.match(r'(?is)^\s*SELECT\b', normalized):
+            return False
+
+        # Une seule instruction : pas de point-virgule au milieu
+        if ';' in normalized:
+            return False
+
+        forbidden = [
+            'INSERT', 'UPDATE', 'DELETE', 'DROP', 'ALTER', 'TRUNCATE',
+            'CREATE', 'GRANT', 'REVOKE', 'EXEC', 'EXECUTE', 'ATTACH',
+            'COPY', 'CALL', 'MERGE', '--', '/*'
+        ]
+        upper_sql = normalized.upper()
+        for kw in forbidden:
+            if kw in upper_sql:
+                return False
+
+        return True
 
     def _understand_with_keywords(self, question):
         """Comprend la question avec des mots-clés (fallback)"""
@@ -422,6 +531,7 @@ Requête SQL :
                     SELECT s.nom, s.gouvernorat, st.debit_max_jour
                     FROM statistiques_annuelles st
                     JOIN station s ON st.code_station = s.code_station
+                    WHERE st.debit_max_jour::text <> 'NaN'
                     ORDER BY st.debit_max_jour DESC
                     LIMIT 1
                 """
@@ -464,6 +574,7 @@ Requête SQL :
                     SELECT s.nom, s.gouvernorat, st.debit_moyen
                     FROM statistiques_annuelles st
                     JOIN station s ON st.code_station = s.code_station
+                    WHERE st.debit_moyen::text <> 'NaN'
                     ORDER BY st.debit_moyen DESC
                     LIMIT 10
                 """
@@ -471,6 +582,7 @@ Requête SQL :
                 SELECT s.nom, s.gouvernorat, st.debit_max_jour
                 FROM statistiques_annuelles st
                 JOIN station s ON st.code_station = s.code_station
+                WHERE st.debit_max_jour::text <> 'NaN'
                 ORDER BY st.debit_max_jour DESC
                 LIMIT 10
             """
@@ -499,6 +611,101 @@ Requête SQL :
         # 2. Fallback: mots-clés
         print("🔍 Utilisation de la méthode par mots-clés")
         return self._understand_with_keywords(question)
+
+    def indexer_stations_dans_zvec(self):
+        """Lit toutes les stations de la base PostgreSQL et les indexe dans Zvec"""
+        if not self.zvec_db:
+            print("⚠️ Zvec non initialisé ou non disponible.")
+            return False
+        if not self.llm:
+            print("⚠️ LLM non disponible pour générer les embeddings.")
+            return False
+
+        stations = self.get_stations_info()
+        if not stations:
+            print("⚠️ Aucune station récupérée depuis PostgreSQL.")
+            return False
+
+        print(f"🧬 Début de l'indexation de {len(stations)} stations dans Zvec...")
+        count = 0
+        for station in stations:
+            code = station.get("code_station")
+            nom = station.get("nom") or ""
+            gouv = station.get("gouvernorat") or ""
+            cours = station.get("cours_eau") or ""
+            
+            if not code:
+                continue
+
+            # Créer un texte descriptif riche à vectoriser
+            desc = f"Station de mesure hydrométrique. Nom: {nom}. Gouvernorat: {gouv}. Cours d'eau: {cours}."
+            
+            # Générer l'embedding
+            emb = self.llm.get_embedding(desc)
+            if not emb:
+                print(f"❌ Échec de génération d'embedding pour la station {nom}")
+                continue
+
+            # Inserer/mettre a jour dans Zvec.
+            # IMPORTANT : upsert() et non insert() - insert() echoue si l'ID
+            # existe deja (comportement documente de Zvec), ce qui aurait
+            # fait planter cette fonction des le 2e lancement (par exemple
+            # apres l'ajout de nouvelles stations). upsert() met a jour la
+            # station si elle existe deja, l'insere sinon.
+            self.zvec_db.upsert(zvec.Doc(
+                id=str(code),
+                vectors={"embedding": emb},
+                fields={
+                    "nom": str(nom),
+                    "gouvernorat": str(gouv),
+                    "cours_eau": str(cours)
+                }
+            ))
+            count += 1
+            if count % 10 == 0:
+                print(f"   Indexed {count}/{len(stations)} stations...")
+
+        # Optimiser l'index
+        self.zvec_db.optimize()
+        print(f"✅ Indexation terminée : {count} stations indexées avec succès.")
+        return True
+
+    def recherche_semantique_station(self, question, limit=5):
+        """Effectue une recherche sémantique de stations dans Zvec"""
+        if not self.zvec_db:
+            print("⚠️ Zvec non disponible.")
+            return []
+        if not self.llm:
+            print("⚠️ LLM non disponible.")
+            return []
+
+        emb = self.llm.get_embedding(question)
+        if not emb:
+            return []
+
+        try:
+            # IMPORTANT : la methode de recherche Zvec s'appelle query(),
+            # pas search() - et les parametres sont queries=zvec.Query(...)
+            # / topk=, pas vector=/vector_name=/limit=. L'ancienne version
+            # levait une AttributeError des le premier appel.
+            resultats = self.zvec_db.query(
+                queries=zvec.Query(field_name="embedding", vector=emb),
+                topk=limit,
+            )
+
+            out = []
+            for doc in resultats:
+                out.append({
+                    "code_station": doc.id,
+                    "nom": doc.fields.get("nom"),
+                    "gouvernorat": doc.fields.get("gouvernorat"),
+                    "cours_eau": doc.fields.get("cours_eau"),
+                    "score": doc.score
+                })
+            return out
+        except Exception as e:
+            print(f"⚠️ Erreur recherche Zvec: {e}")
+            return []
 
     def get_stations_info(self, station_name=None, gouvernorat=None):
         base_select, _ = self._station_select_sql()
@@ -577,18 +784,24 @@ Requête SQL :
             return []
 
         query = f"""
-            SELECT 
+            SELECT
                 COUNT(DISTINCT s.code_station) as nb_stations,
                 COUNT(DISTINCT s.gouvernorat) as nb_gouvernorats,
-                AVG(st.debit_moyen) as debit_moyen_global,
-                MAX(st.debit_max_jour) as debit_max_global,
-                SUM(st.volume_total_hm3) as volume_total_global,
+                AVG(st.debit_moyen) FILTER (WHERE st.debit_moyen::text <> 'NaN') as debit_moyen_global,
+                MAX(st.debit_max_jour) FILTER (WHERE st.debit_max_jour::text <> 'NaN') as debit_max_global,
+                SUM(st.volume_total_hm3) FILTER (WHERE st.volume_total_hm3::text <> 'NaN') as volume_total_global,
                 AVG(st.taux_remplissage) as taux_remplissage_moyen,
                 MIN(st.annee) as annee_min,
                 MAX(st.annee) as annee_max
             FROM ({base_select}) s
             JOIN statistiques_annuelles st ON s.code_station = st.code_station
         """
+        # NOTE : le cast ::text <> 'NaN' exclut les NaN (IS NOT NULL ne suffit
+        # pas ici : NaN est une valeur numerique valide en PostgreSQL, pas un
+        # NULL, et PostgreSQL considere NaN = NaN comme VRAI - donc un simple
+        # `colonne = colonne` ne les filtre pas). Un seul enregistrement
+        # corrompu avec NaN suffit sinon a rendre AVG/MAX/SUM NaN pour tout
+        # l'agregat.
         return self._execute_query(query)
     
     def get_best_stations(self, critere="debit_moyen", limit=10):
@@ -711,22 +924,78 @@ class AgentRAGOrchestrator:
     def answer(self, question):
         """
         Répond à n'importe quelle question
-        1. Comprend la question avec le LLM (ou mots-clés)
-        2. Exécute la requête SQL
-        3. Formate la réponse
+        1. Essayer de comprendre la question et d'interroger la base via SQL
+        2. Si aucun résultat ou si la question porte sur une recherche sémantique/floue de station,
+           faire une recherche sémantique avec Zvec.
+        3. Formater la réponse.
         """
         print(f"🔍 Question: {question}")
         
-        # 1. Comprendre la question et générer SQL
+        data = None
+        sql = None
+        is_semantic_fallback = False
+        
+        # 1. Tenter la recherche SQL classique
         sql = self.rag.understand_question(question)
-        print(f"📝 SQL généré: {sql}")
-        
-        # 2. Exécuter la requête
-        data = self.rag._execute_query(sql)
-        
+        if sql:
+            print(f"📝 SQL généré: {sql}")
+            try:
+                data = self.rag._execute_query_raising(sql)
+            except Exception as e:
+                print(f"⚠️ SQL invalide généré par le LLM ({e}) — repli sur les mots-clés")
+                sql = self.rag._understand_with_keywords(question)
+                print(f"📝 SQL de secours: {sql}")
+                data = self.rag._execute_query(sql)
+                
+        # 2. Si pas de données trouvées et que Zvec est connecté
+        if (not data or len(data) == 0) and self.rag.zvec_db:
+            print("🔍 Aucun résultat SQL ou échec. Tentative de recherche sémantique via Zvec...")
+            semantic_results = self.rag.recherche_semantique_station(question, limit=5)
+            if semantic_results:
+                data = semantic_results
+                is_semantic_fallback = True
+                print(f"🧠 Recherche sémantique Zvec a trouvé {len(data)} stations similaires.")
+                
         # 3. Formater la réponse
+        if is_semantic_fallback:
+            return self._format_semantic_answer(question, data)
         return self._format_answer(question, data, sql)
-    
+
+    def _format_semantic_answer(self, question, data):
+        """Formate la réponse sémantique en utilisant le LLM"""
+        if not data:
+            return "Aucune station similaire trouvée."
+            
+        if self.use_llm and self.llm:
+            try:
+                context = "\n".join([
+                    f"- Station: {r['nom']} (Gouvernorat: {r['gouvernorat']}, Cours d'eau: {r['cours_eau']}) [similarité: {r['score']:.4f}]"
+                    for r in data
+                ])
+                prompt = f"""
+Tu es un expert hydromologue. L'utilisateur a posé une question descriptive ou floue pour chercher des stations.
+Nous avons fait une recherche sémantique dans la base de données et trouvé les stations les plus pertinentes ci-dessous.
+
+Question de l'utilisateur : "{question}"
+
+Stations trouvées :
+{context}
+
+Rédige une réponse claire et professionnelle présentant ces résultats à l'utilisateur de manière naturelle.
+Ne mentionne pas le terme "score de similarité" directement ou de manière trop technique, mais présente-les par ordre de pertinence.
+"""
+                response = self.llm.generate(prompt, max_tokens=300)
+                if response:
+                    return response
+            except Exception as e:
+                print(f"⚠️ Erreur enrichissement sémantique LLM: {e}")
+                
+        # Formatage basique de secours
+        lines = [f"📊 Stations les plus similaires trouvées pour votre recherche :"]
+        for i, r in enumerate(data, 1):
+            lines.append(f"  {i}. **{r['nom']}** ({r['gouvernorat']}) sur le cours d'eau {r['cours_eau']} (score: {r['score']:.3f})")
+        return "\n".join(lines)
+
     def _format_answer(self, question, data, sql):
         """Formate la réponse de manière naturelle"""
         if not data:

@@ -17,7 +17,8 @@ import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import cm
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak, Image, Table, TableStyle, Frame, PageTemplate, BaseDocTemplate, KeepTogether
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak, Image, Table, TableStyle, Frame, PageTemplate, BaseDocTemplate, Flowable, KeepTogether
+from reportlab.platypus.tableofcontents import TableOfContents
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER, TA_RIGHT, TA_LEFT
@@ -55,7 +56,16 @@ class HeaderFooterDocTemplate(BaseDocTemplate):
     def __init__(self, filename, **kwargs):
         self.station_name = ""
         self.annee = ""
-        self.gouvernorat = ""
+        # Table {numero_de_page: nom_du_gouvernorat}, construite au fil du
+        # rendu (voir afterFlowable). On NE MUTE PLUS un attribut "gouvernorat"
+        # en direct pendant le dessin : avec doc.multiBuild (plusieurs passes
+        # de rendu pour le sommaire), le callback onPage se declenche AVANT
+        # que le contenu de la page courante (donc un eventuel marqueur) ne
+        # soit dessine, ce qui cree un decalage d'une page - et l'attribut
+        # persistait aussi d'une passe a l'autre. Une table page->gouvernorat,
+        # remplie au fil du rendu puis relue par simple recherche dans
+        # _header_footer, evite ces deux pieges.
+        self._gouv_par_page = {}
         super().__init__(filename, **kwargs)
         
         self.topMargin = 2.8*cm
@@ -78,7 +88,27 @@ class HeaderFooterDocTemplate(BaseDocTemplate):
                 onPage=self._header_footer
             )
         ])
-    
+
+    def build(self, flowables, **kwargs):
+        # doc.multiBuild() appelle build() plusieurs fois (pour stabiliser
+        # les numeros de page du sommaire) : sans reinitialisation, des
+        # entrees d'une passe precedente (avec d'anciens numeros de page,
+        # potentiellement decales si la pagination a bouge d'une passe a
+        # l'autre) restaient dans la table et faussaient le pied de page.
+        self._gouv_par_page = {}
+        return super().build(flowables, **kwargs)
+
+    def _gouvernorat_a_la_page(self, numero_page):
+        """Recherche le gouvernorat en vigueur a une page donnee : le
+        dernier enregistre dont la page de debut est <= numero_page."""
+        gouv_actuel = None
+        for page_debut in sorted(self._gouv_par_page):
+            if page_debut <= numero_page:
+                gouv_actuel = self._gouv_par_page[page_debut]
+            else:
+                break
+        return gouv_actuel
+
     def _header_footer(self, canvas, doc):
         canvas.saveState()
 
@@ -101,15 +131,28 @@ class HeaderFooterDocTemplate(BaseDocTemplate):
         canvas.line(doc.leftMargin, doc.bottomMargin - 0.4*cm, A4[0] - doc.rightMargin, doc.bottomMargin - 0.4*cm)
         canvas.drawString(doc.leftMargin, doc.bottomMargin - 0.7*cm, f"Annuaire Hydrologique de la Tunisie, {doc.annee}")
         canvas.drawCentredString(A4[0]/2, doc.bottomMargin - 0.7*cm, str(doc.page))
-        if doc.gouvernorat:
-            canvas.drawRightString(A4[0] - doc.rightMargin, doc.bottomMargin - 0.7*cm, f"Gouvernorat de {doc.gouvernorat}")
+        gouv_page = self._gouvernorat_a_la_page(doc.page)
+        if gouv_page:
+            canvas.drawRightString(A4[0] - doc.rightMargin, doc.bottomMargin - 0.7*cm, f"Gouvernorat de {gouv_page}")
 
         canvas.restoreState()
 
-    # NOTE : pas de surcharge de afterFlowable() ici. BaseDocTemplate
-    # incremente deja doc.page correctement a chaque saut de page ;
-    # le faire en plus dans afterFlowable() (appele apres CHAQUE flowable,
-    # pas juste a chaque page) faussait completement la numerotation.
+    # NOTE : cette surcharge de afterFlowable() ne touche PAS a self.page
+    # (BaseDocTemplate l'incremente deja correctement tout seul a chaque
+    # saut de page - un bug precedent le faisait aussi ici par erreur et
+    # faussait completement la numerotation). Elle enregistre les entrees
+    # du sommaire (TableOfContents) ET la table page->gouvernorat, a partir
+    # des titres de gouvernorat/sections rencontres pendant le rendu.
+    def afterFlowable(self, flowable):
+        if isinstance(flowable, Paragraph):
+            style_name = getattr(flowable.style, "name", "")
+            texte = flowable.getPlainText()
+            if style_name == "GouvTitle":
+                self.notify("TOCEntry", (0, texte, self.page))
+                nom_gouv = texte.replace("GOUVERNORAT DE ", "").strip()
+                self._gouv_par_page[self.page] = nom_gouv
+            elif style_name == "TOCSectionEntry":
+                self.notify("TOCEntry", (1, texte, self.page))
 
 
 # Situation geographique reelle des gouvernorats (limites administratives et
@@ -144,13 +187,20 @@ GOUVERNORAT_GEO_INFO = {
 }
 
 
+
 def normaliser_gouvernorat(gouv):
     """Normalise un libelle brut de gouvernorat (ex: 'beja', 'Béja') vers le
     code standard utilise dans GOUVERNORATS_ORDER (ex: 'BEJA'). Retourne
     None si `gouv` est vide/absent."""
     if not gouv:
         return None
+    import unicodedata
     gouv = str(gouv).upper().strip()
+    # Les accents sont retires avant comparaison (ex: 'BÉJA' -> 'BEJA') : la
+    # liste de correspondances ci-dessous est volontairement en ASCII pur,
+    # et un utilisateur tapant le nom avec son orthographe francaise usuelle
+    # (accentuee) ne doit pas echouer a matcher.
+    gouv_sans_accent = unicodedata.normalize('NFKD', gouv).encode('ascii', 'ignore').decode('ascii')
     correspondances = [
         "ARIANA", "MANOUBA", "BIZERTE", "BEJA", "JENDOUBA", "KEF", "SILIANA",
         "BEN AROUS", "NABEUL", "ZAGHOUAN", "KAIROUAN", "KASSERINE",
@@ -158,9 +208,26 @@ def normaliser_gouvernorat(gouv):
         "GABES", "KEBILI", "TOZEUR", "MEDENINE", "TATAOUINE",
     ]
     for cle in correspondances:
-        if cle in gouv:
+        if cle in gouv_sans_accent:
             return "L'ARIANA" if cle == "ARIANA" else cle
     return gouv
+
+
+# Formulation grammaticale correcte ("de l'Ariana", "de la Manouba", "du
+# Kef") pour les quelques gouvernorats dont le nom ne se construit pas
+# simplement avec "de {nom}" - utilisee dans les phrases generees
+# (section barrages, etc). Meme logique que _phrase_gouvernorat dans
+# agent_cartographie.py (non reutilisee ici pour eviter un couplage a une
+# fonction privee d'un autre module).
+_PHRASE_GOUVERNORAT_SPECIALE = {
+    "L'ARIANA": "de l'Ariana",
+    "MANOUBA": "de la Manouba",
+    "KEF": "du Kef",
+}
+
+
+def phrase_de_gouvernorat(gouv):
+    return _PHRASE_GOUVERNORAT_SPECIALE.get(gouv, f"de {gouv.title()}")
 
 
 class AgentEdition:
@@ -183,8 +250,22 @@ class AgentEdition:
             self.annee = int(annee) if annee is not None else 2019
         except (TypeError, ValueError):
             self.annee = 2019
+
+        # Racine du projet (2 niveaux au-dessus de src/agents/), pour ancrer
+        # les chemins de sortie independamment du repertoire de travail
+        # courant (CWD). Un chemin relatif comme "output/pdf/" depend de
+        # l'endroit d'ou le script est lance - avec le rechargeur Flask en
+        # mode debug (qui relance parfois un sous-processus avec un CWD
+        # different sous Windows), cela pouvait pointer vers un dossier
+        # inexistant comme src/api/output/pdf/ au lieu de la racine.
+        racine_projet = os.path.normpath(
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..")
+        )
+        if not os.path.isabs(output_dir):
+            output_dir = os.path.join(racine_projet, output_dir)
         self.output_dir = output_dir
-        
+        self._dossier_graphes = os.path.join(racine_projet, "output", "graphs")
+
         db_url = URL.create(
             "postgresql+psycopg2",
             username=self.db_user,
@@ -197,7 +278,10 @@ class AgentEdition:
         print(f"Connexion PostgreSQL : {self.db_host}:{self.db_port}/{self.db_name}")
         
         os.makedirs(self.output_dir, exist_ok=True)
-        os.makedirs("output/graphs/", exist_ok=True)
+        os.makedirs(self._dossier_graphes, exist_ok=True)
+
+        from agents.agent_cartographie import AgentCartographie
+        self.cartographie = AgentCartographie()
     
     def close(self):
         if self.engine:
@@ -302,9 +386,24 @@ class AgentEdition:
                 details["Altitude"] = station_row.get("altitude") or details.get("Altitude")
                 details["Superficie"] = station_row.get("superficie_km2") or details.get("Superficie")
                 details["Gouvernorat"] = station_row.get("gouvernorat") or details.get("Gouvernorat")
-                # Meilleure correspondance disponible pour ces deux champs du
-                # rapport manuel (a confirmer visuellement sur une vraie fiche) :
-                details["Secteur hydrographique"] = station_row.get("bassin") or details.get("Secteur hydrographique")
+
+                # Secteur hydrographique : determine par une vraie jointure
+                # spatiale (region_hydrographiques.geojson, 7 regions
+                # officielles) a partir des coordonnees de la station -
+                # plus fiable que le champ texte `bassin` (saisie manuelle),
+                # utilise seulement en repli si la jointure spatiale echoue
+                # (geopandas absent, coordonnees manquantes, etc.)
+                secteur_reel = None
+                x_utm = station_row.get("x_utm")
+                y_utm = station_row.get("y_utm")
+                if x_utm is not None and y_utm is not None:
+                    try:
+                        secteur_reel = self.cartographie.secteur_hydrographique_pour_point(x_utm, y_utm)
+                    except Exception:
+                        secteur_reel = None
+                details["Secteur hydrographique"] = (
+                    secteur_reel or station_row.get("bassin") or details.get("Secteur hydrographique")
+                )
                 details["Sous-Secteur"] = station_row.get("region") or details.get("Sous-Secteur")
         except Exception as e:
             print(f"Impossible de lire les metadonnees de 'station' pour {code_station} : {e}")
@@ -455,17 +554,6 @@ class AgentEdition:
             ("ALIGN", (0, 0), (-1, -1), "CENTER"),
             ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
             ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.whitesmoke, colors.lightgrey]),
-            # Sans ceci, ReportLab applique un padding par defaut (6pt en
-            # haut ET en bas de CHAQUE cellule) qui, multiplie par les 35
-            # lignes de ce tableau (31 jours + Moy/Min/Max), ajoutait a lui
-            # seul ~5cm de hauteur inutile -> c'est ce qui poussait
-            # "top_panel" hors de la page malgre le KeepTogether, et
-            # faisait atterrir la fiche de renseignements seule sur sa
-            # page pour certaines stations.
-            ("TOPPADDING", (0, 0), (-1, -1), 1),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 1),
-            ("LEFTPADDING", (0, 0), (-1, -1), 1),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 1),
         ]))
         return table
 
@@ -477,7 +565,7 @@ class AgentEdition:
                 return normalized[key]
         return default
 
-    def _station_info_table(self, code_station, nom_station, font_size=6):
+    def _station_info_table(self, code_station, nom_station, font_size=5):
         details = self.get_station_metadata(code_station)
 
         def make_line(label, value, with_check=True):
@@ -525,8 +613,8 @@ class AgentEdition:
             ("BOX", (0, 0), (-1, -1), 0, colors.white),
             ("LEFTPADDING", (0, 0), (-1, -1), 0),
             ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-            ("TOPPADDING", (0, 0), (-1, -1), 1),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 1),
+            ("TOPPADDING", (0, 0), (-1, -1), 0.5),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 0.5),
         ]))
 
         right_table = Table(right_rows, colWidths=[8.1*cm])
@@ -534,12 +622,12 @@ class AgentEdition:
             ("BOX", (0, 0), (-1, -1), 0, colors.white),
             ("LEFTPADDING", (0, 0), (-1, -1), 0),
             ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-            ("TOPPADDING", (0, 0), (-1, -1), 1),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 1),
+            ("TOPPADDING", (0, 0), (-1, -1), 0.5),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 0.5),
         ]))
 
         table = Table(
-            [[Paragraph("<font size='7'><b>1/Fiche de renseignements de la station:</b></font>", getSampleStyleSheet()["BodyText"])], 
+            [[Paragraph("<font size='6'><b>1/Fiche de renseignements de la station:</b></font>", getSampleStyleSheet()["BodyText"])], 
              [Table([[left_table, right_table]], colWidths=[8.0*cm, 8.1*cm])]],
             colWidths=[16.1*cm]
         )
@@ -549,8 +637,8 @@ class AgentEdition:
             ("VALIGN", (0, 0), (-1, -1), "TOP"),
             ("LEFTPADDING", (0, 0), (-1, -1), 3),
             ("RIGHTPADDING", (0, 0), (-1, -1), 3),
-            ("TOPPADDING", (0, 0), (-1, -1), 2),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+            ("TOPPADDING", (0, 0), (-1, -1), 1),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 1),
         ]))
         return table
 
@@ -639,7 +727,7 @@ class AgentEdition:
         ]))
         return table
 
-    def _plot_courbe_etalonnage(self, code_station):
+    def _plot_courbe_etalonnage(self, code_station, nom_station=""):
         df = self.get_etalonnage(code_station)
         if df.empty:
             return None
@@ -652,48 +740,157 @@ class AgentEdition:
             return None
 
         fig, ax = plt.subplots(figsize=(4.8, 3.1))
-        ax.plot(data["hauteur_cm"], data["debit_m3s"], color="#1a5276", marker="o", linewidth=1.2, markersize=2.5)
-        ax.set_title("Courbe d'etalonnage", fontsize=8)
-        ax.set_xlabel("Hauteur (cm)", fontsize=7)
-        ax.set_ylabel("Debit (m³/s)", fontsize=7)
+        # Axes comme dans l'annuaire manuel : X = debits, Y = cote a l'echelle
+        # (c'etait invers/e auparavant : X = hauteur, Y = debit).
+        ax.plot(data["debit_m3s"], data["hauteur_cm"], color="#1a5276", marker="o", linewidth=1.2, markersize=2.5)
+        titre = f"Courbe d'étalonnage de la station {nom_station}" if nom_station else "Courbe d'étalonnage"
+        ax.set_title(titre, fontsize=8)
+        ax.set_xlabel("Débits (m³/s)", fontsize=7)
+        ax.set_ylabel("Cote à l'échelle (cm)", fontsize=7)
         ax.grid(True, alpha=0.3)
         ax.tick_params(labelsize=6)
         plt.tight_layout()
 
-        filename = f"output/graphs/etalonnage_{code_station}_{self.annee}.png"
+        filename = os.path.join(self._dossier_graphes, f"etalonnage_{code_station}_{self.annee}.png")
         fig.savefig(filename, dpi=250, bbox_inches="tight")
         plt.close(fig)
         return filename
 
-    def _plot_hydrogramme_crue_principale(self, crues_df, code_station, nom_station):
-        if crues_df is None or crues_df.empty:
+    def _tableau_etalonnage_bareme(self, code_station):
+        """Tableau du bareme H(cm)/Q(m3/s) sur 2 colonnes cote a cote,
+        comme dans l'annuaire manuel (au-dessus de la courbe)."""
+        df = self.get_etalonnage(code_station)
+        if df.empty:
             return None
-        
+
+        data = df.copy()
+        data["hauteur_cm"] = pd.to_numeric(data["hauteur_cm"], errors="coerce")
+        data["debit_m3s"] = pd.to_numeric(data["debit_m3s"], errors="coerce")
+        data = data.dropna(subset=["hauteur_cm", "debit_m3s"]).sort_values("hauteur_cm").reset_index(drop=True)
+        if data.empty:
+            return None
+
+        style_cell = getSampleStyleSheet()["BodyText"]
+
+        def cell(texte, gras=False):
+            texte = f"<b>{texte}</b>" if gras else texte
+            return Paragraph(f"<font size='6'>{texte}</font>", style_cell)
+
+        n = len(data)
+        moitie = (n + 1) // 2
+        premiere = data.iloc[:moitie]
+        seconde = data.iloc[moitie:]
+
+        def sous_tableau(sous_df):
+            lignes = [[cell("H<br/>(cm)", gras=True), cell("Q<br/>(m³/s)", gras=True)]]
+            for _, row in sous_df.iterrows():
+                h = row["hauteur_cm"]
+                q = row["debit_m3s"]
+                h_txt = f"{h:.0f}" if float(h).is_integer() else f"{h:.2f}".replace(".", ",")
+                q_txt = f"{q:.2f}".replace(".", ",")
+                lignes.append([cell(h_txt), cell(q_txt)])
+            t = Table(lignes, colWidths=[1.3*cm, 1.3*cm])
+            t.setStyle(TableStyle([
+                ("GRID", (0, 0), (-1, -1), 0.4, colors.black),
+                ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("BACKGROUND", (0, 0), (-1, 0), colors.whitesmoke),
+                ("TOPPADDING", (0, 0), (-1, -1), 1),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 1),
+            ]))
+            return t
+
+        table_gauche = sous_tableau(premiere)
+        table_droite = sous_tableau(seconde) if not seconde.empty else Paragraph("", style_cell)
+
+        conteneur = Table([[table_gauche, table_droite]], colWidths=[2.9*cm, 2.9*cm])
+        conteneur.setStyle(TableStyle([
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 1),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 1),
+            ("TOPPADDING", (0, 0), (-1, -1), 0),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+        ]))
+        return conteneur
+
+    def _detecter_capteur_suspect(self, crue_row, serie, seuil_heures_figees=4.0):
+        """Detecte un motif de capteur probablement bloque/fige :
+        - la crue elle-meme a un debit de debut EXACTEMENT egal au debit de
+          fin (plateau fige avant/apres, motif observe sur Pont de Bizerte
+          2024), et/ou
+        - la serie de debits instantanes de la fenetre contient une
+          sequence de valeurs strictement identiques anormalement longue.
+        Retourne (True, message_explicatif) ou (False, None)."""
+        debut = crue_row.get("debit_debut")
+        fin = crue_row.get("debit_fin")
+        if pd.notna(debut) and pd.notna(fin) and float(debut) == float(fin):
+            return True, (
+                "Capteur probablement défaillant (débit figé) : le débit de début et de fin "
+                "de cette crue sont strictement identiques, motif typique d'un capteur bloqué "
+                "plutôt que d'une véritable crue. Hydrogramme non affiché par prudence."
+            )
+
+        if serie is not None and not serie.empty and len(serie) > 1:
+            pas_minutes = serie["date_heure"].diff().dt.total_seconds().median() / 60
+            if not pas_minutes or pas_minutes <= 0:
+                pas_minutes = 15
+            max_len, valeur_figee = 1, serie["debit_m3s"].iloc[0]
+            cur_len, cur_val = 1, serie["debit_m3s"].iloc[0]
+            for v in serie["debit_m3s"].iloc[1:]:
+                if v == cur_val:
+                    cur_len += 1
+                else:
+                    cur_val, cur_len = v, 1
+                if cur_len > max_len:
+                    max_len, valeur_figee = cur_len, cur_val
+            duree_figee_h = (max_len * pas_minutes) / 60
+            if duree_figee_h >= seuil_heures_figees:
+                return True, (
+                    f"Capteur probablement défaillant : le débit reste figé à "
+                    f"{valeur_figee:.3f} m³/s pendant environ {duree_figee_h:.1f}h sans variation, "
+                    "ce qui n'est pas cohérent avec une dynamique de crue réelle. "
+                    "Hydrogramme non affiché par prudence."
+                )
+
+        return False, None
+
+    def _plot_hydrogramme_crue_principale(self, crues_df, code_station, nom_station):
+        """Retourne (chemin_image, message) :
+        - (chemin, None) si l'hydrogramme a ete genere normalement
+        - (None, message) si aucune donnee, ou si un capteur suspect a ete
+          detecte (le message explique alors pourquoi, a afficher dans le
+          PDF a la place du graphique)."""
+        if crues_df is None or crues_df.empty:
+            return None, None
+
         crues_df = crues_df.copy()
         crues_df['debit_max_m3s'] = pd.to_numeric(crues_df['debit_max_m3s'], errors='coerce')
         crue_max = crues_df.loc[crues_df['debit_max_m3s'].idxmax()]
-        
+
         date_debut = pd.to_datetime(crue_max.get("date_debut"), errors="coerce")
         date_fin = pd.to_datetime(crue_max.get("date_fin"), errors="coerce")
-        
+
         if pd.isna(date_debut) or pd.isna(date_fin):
-            return None
-        
+            return None, None
+
         duree = date_fin - date_debut
         marge_avant = duree if duree > pd.Timedelta(0) else pd.Timedelta(hours=48)
         marge_apres = duree / 4 if duree > pd.Timedelta(0) else pd.Timedelta(hours=12)
-        
+
         fenetre_debut = date_debut - marge_avant
         fenetre_fin = date_fin + marge_apres
-        
+
         serie = self.get_debits_instantanes(code_station, fenetre_debut, fenetre_fin)
         if serie.empty:
-            return None
-        
+            return None, None
+
+        suspect, message = self._detecter_capteur_suspect(crue_max, serie)
+        if suspect:
+            print(f"[avertissement] {code_station} : {message}")
+            return None, message
+
         fig, ax = plt.subplots(figsize=(4.8, 3.1))
         ax.plot(serie["date_heure"], serie["debit_m3s"], color="#2e5aac", linewidth=1.0)
-        ax.set_xlim(serie["date_heure"].min(), serie["date_heure"].max())
-        ax.margins(x=0)
         
         date_pic = serie.loc[serie['debit_m3s'].idxmax(), 'date_heure']
         debit_pic = serie['debit_m3s'].max()
@@ -708,13 +905,16 @@ class AgentEdition:
         ax.set_ylabel("Débits instantanés (m³/s)", fontsize=7)
         ax.grid(True, alpha=0.3)
         ax.tick_params(labelsize=6)
+        # Affiche heure:minute en plus de la date sur l'axe X (utile ici car
+        # la crue se joue sur quelques jours a pas de temps fin).
+        ax.xaxis.set_major_formatter(mdates.DateFormatter('%d/%m %H:%M'))
         fig.autofmt_xdate(rotation=25)
         plt.tight_layout()
         
-        filename = f"output/graphs/crue_principale_{code_station}_{self.annee}.png"
+        filename = os.path.join(self._dossier_graphes, f"crue_principale_{code_station}_{self.annee}.png")
         fig.savefig(filename, dpi=250, bbox_inches="tight")
         plt.close(fig)
-        return filename
+        return filename, None
 
     def _safe_image(self, path, width, height):
         if not path or not os.path.exists(path):
@@ -795,12 +995,20 @@ class AgentEdition:
         """Tableau d'identification des stations hydrometriques du
         gouvernorat (equivalent du 'Tableau 8' de l'annuaire manuel) :
         BV (bassin + code secteur), N°, N° Station, Station, Cours d'eau,
-        XUTM, YUTM, Alt, Sup. Les colonnes "Mesures effectuees"
-        (DMJ/JC/JE/RS/TP) du manuel ne sont pas incluses : cette donnee
-        n'existe dans aucune table de la base actuelle (a fournir si vous
-        voulez les completer plutot que d'afficher des valeurs inventees)."""
+        XUTM, YUTM, Alt, Sup, et les colonnes "Mesures effectuees"
+        (DMJ/JC/JE/RS/TP). DMJ reflete la disponibilite reelle de debits
+        moyens journaliers en base (`statistiques_annuelles`) pour l'annee
+        courante ; JC/JE/RS/TP affichent "Non" par defaut, ces donnees
+        (jaugeages de crue/etiage, salinite, turbidite) n'etant pas encore
+        disponibles dans la base actuelle."""
+        codes_avec_dmj = set(pd.read_sql(
+            "SELECT DISTINCT code_station FROM statistiques_annuelles WHERE annee = %s",
+            self.engine, params=(self.annee,)
+        )["code_station"])
+
         header_row1 = ["BV", "N°", "N° Station", "Station", "Cours d'eau",
-                        "XUTM (m)", "YUTM (m)", "Alt (m)", "Sup (Km²)"]
+                        "XUTM (m)", "YUTM (m)", "Alt (m)", "Sup (Km²)",
+                        "DMJ", "JC", "JE", "RS", "TP"]
         data = [header_row1]
 
         # Trie par BV pour permettre le regroupement visuel (comme le
@@ -826,10 +1034,12 @@ class AgentEdition:
             alt = station.get('altitude')
             sup = station.get('superficie_km2')
 
+            dmj = "Oui" if str(station.get('code_station', '')) in codes_avec_dmj else "Non"
             data.append([
                 bv_libelle, str(i), str(station.get('code_station', '')), str(station.get('nom', '')),
                 str(cours_eau), self._format_value(x_utm), self._format_value(y_utm),
-                self._format_value(alt), self._format_value(sup)
+                self._format_value(alt), self._format_value(sup),
+                dmj, "Non", "Non", "Non", "Non"
             ])
 
             if bv_libelle != bv_precedent:
@@ -842,7 +1052,8 @@ class AgentEdition:
             bv_spans.append((debut_span, ligne_courante - debut_span))
 
         table = Table(data, repeatRows=1,
-                       colWidths=[1.6*cm, 0.8*cm, 2.2*cm, 3.0*cm, 2.2*cm, 1.8*cm, 1.8*cm, 1.2*cm, 1.5*cm])
+                       colWidths=[1.4*cm, 0.6*cm, 2.0*cm, 2.6*cm, 1.8*cm, 1.7*cm, 1.7*cm, 1.0*cm, 1.3*cm,
+                                  0.65*cm, 0.65*cm, 0.65*cm, 0.65*cm, 0.65*cm])
         style_cmds = [
             ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1a5276")),
             ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
@@ -862,10 +1073,25 @@ class AgentEdition:
         table.setStyle(TableStyle(style_cmds))
         return table
 
-    def _carte_stations_gouvernorat(self, stations, gouv):
-        """Carte simplifiee de situation des stations, a partir des
-        coordonnees UTM deja en base (pas de fond de carte officiel/SIG,
-        juste la position relative des stations et leurs noms)."""
+    def _carte_gouvernorat_reel(self, gouv, stations=None, avec_mnt=False):
+        """Delegue a AgentCartographie (module dedie, isole des dependances
+        SIG lourdes - geopandas/rasterio - du reste de la generation PDF).
+        Retourne (chemin_image, titre) - titre est destine a etre affiche
+        en legende sous l'image (et non plus dans l'image elle-meme)."""
+        return self.cartographie.carte_gouvernorat(
+            gouv, stations=stations, avec_mnt=avec_mnt, annee=self.annee
+        )
+
+    def _carte_stations_gouvernorat(self, stations, gouv, avec_mnt=True):
+        """Carte des stations du gouvernorat, avec le relief (MNT) et les
+        cours d'eau en fond - comme la section "Reseaux hydrometriques du
+        gouvernorat" de l'annuaire manuel. Repli sur un simple nuage de
+        points si le fond de carte SIG est indisponible. Retourne
+        (chemin_image, titre)."""
+        carte_reelle, titre_reel = self._carte_gouvernorat_reel(gouv, stations=stations, avec_mnt=avec_mnt)
+        if carte_reelle:
+            return carte_reelle, titre_reel
+
         points = []
         for station in stations:
             nom = station.get('nom', '')
@@ -877,8 +1103,9 @@ class AgentEdition:
                 continue
 
         if not points:
-            return None
+            return None, None
 
+        titre = f"Carte de situation des stations - Gouvernorat de {gouv}"
         fig, ax = plt.subplots(figsize=(6.5, 5.5))
         xs = [p[0] for p in points]
         ys = [p[1] for p in points]
@@ -886,7 +1113,6 @@ class AgentEdition:
         for x, y, nom in points:
             ax.annotate(nom, (x, y), fontsize=6, xytext=(4, 4), textcoords="offset points")
 
-        ax.set_title(f"Carte de situation des stations - Gouvernorat de {gouv}", fontsize=9)
         ax.set_xlabel("X UTM (m)", fontsize=7)
         ax.set_ylabel("Y UTM (m)", fontsize=7)
         ax.tick_params(labelsize=6)
@@ -894,10 +1120,10 @@ class AgentEdition:
         ax.set_aspect("equal", adjustable="datalim")
         plt.tight_layout()
 
-        filename = f"output/graphs/carte_{gouv.replace(chr(39), '').replace(' ', '_')}_{self.annee}.png"
+        filename = os.path.join(self._dossier_graphes, f"carte_{gouv.replace(chr(39), '').replace(' ', '_')}_{self.annee}.png")
         fig.savefig(filename, dpi=200, bbox_inches="tight")
         plt.close(fig)
-        return filename
+        return filename, titre
 
     def _situation_geographique_text(self, stations, gouv):
         """Texte de situation geographique du gouvernorat, dans le style du
@@ -941,82 +1167,92 @@ class AgentEdition:
         donnee n'est pas disponible."""
         return None
 
+    @staticmethod
+    def _fmt_hm3(valeur):
+        """Formate une valeur en Mm3 comme le modele manuel (decimales
+        variables, sans zeros superflus : 33 / 4.48 / 23.6). Retourne None
+        si la valeur est absente."""
+        if valeur is None or pd.isna(valeur):
+            return None
+        texte = f"{float(valeur):.3f}".rstrip('0').rstrip('.')
+        return texte
+
     def _section_ressources_surface(self, gouv):
-        """Placeholder : necessite une source de donnees de barrages /
-        ressources de surface (non presente dans la base actuelle)."""
-        return None
+        """Section "Les barrages du gouvernorat" : liste les barrages
+        rattaches a ce gouvernorat (table `barrage`) avec, pour chacun,
+        annee de construction / oued / capacite / apport de l'annee
+        hydrologique vs apport normal - dans le style du modele manuel.
+        Retourne un message dedie si le gouvernorat n'a aucun barrage, et
+        None si la table `barrage_annuel` n'a aucune donnee pour l'annee
+        courante (cas different : donnee non chargee, pas "pas de barrage")."""
+        query = """
+            SELECT b.nom_barrage, b.gouvernorat, b.annee_construction, b.oued,
+                   b.capacite_hm3, b.apport_normal_hm3, ba.apport_cumule_hm3
+            FROM barrage b
+            LEFT JOIN barrage_annuel ba ON ba.code_barrage = b.code_barrage AND ba.annee = %s
+            ORDER BY b.nom_barrage
+        """
+        df = pd.read_sql(query, self.engine, params=(self.annee,))
+        if df.empty:
+            return None
 
-    # Duree maximale (en jours) qu'on considere plausible pour UNE seule
-    # crue. Au-dela, la crue "detectee" en base melange presque surement
-    # plusieurs episodes ou une derive de calcul (temps de base delirant,
-    # dates de debut/fin incoherentes) : le trace resultant est illisible
-    # (plusieurs mois de bruit) plutot qu'un hydrogramme de crue exploitable.
-    DUREE_CRUE_MAX_JOURS = 10
+        style_body = ParagraphStyle(name='RessourcesBody', parent=getSampleStyleSheet()['Normal'],
+                                     fontSize=9, leading=12, spaceAfter=4)
+        style_puce = ParagraphStyle(name='RessourcesPuce', parent=style_body, leftIndent=14, spaceAfter=3)
 
-    def _crue_est_fiable(self, row):
-        """Renvoie False si la crue (ligne de `crues`) presente des valeurs
-        incoherentes ou une duree deraisonnable pour un seul evenement de
-        crue, auquel cas elle ne doit pas etre utilisee (ni pour le trace,
-        ni pour la considerer comme LA crue de reference de la station)."""
-        try:
-            debit_max = float(row.get("debit_max_m3s"))
-        except (TypeError, ValueError):
-            return False
-        if not np.isfinite(debit_max) or debit_max <= 0:
-            return False
+        df = df[df["gouvernorat"].apply(normaliser_gouvernorat) == gouv]
+        if df.empty:
+            return [Paragraph(
+                f"Il n'y a aucun barrage dans le gouvernorat {phrase_de_gouvernorat(gouv)}.",
+                style_body
+            )]
 
-        date_debut = pd.to_datetime(row.get("date_debut"), errors="coerce")
-        date_fin = pd.to_datetime(row.get("date_fin"), errors="coerce")
-        if pd.isna(date_debut) or pd.isna(date_fin) or date_fin <= date_debut:
-            return False
+        nb = len(df)
+        elements = [Paragraph(
+            f"Les eaux de surface du gouvernorat {phrase_de_gouvernorat(gouv)} sont mobilisées par "
+            f"{nb} barrage{'s' if nb > 1 else ''} :",
+            style_body
+        )]
+        for _, row in df.iterrows():
+            capacite = self._fmt_hm3(row["capacite_hm3"])
+            apport = self._fmt_hm3(row["apport_cumule_hm3"])
+            apport_normal = self._fmt_hm3(row["apport_normal_hm3"])
+            oued = row["oued"] if pd.notna(row["oued"]) else None
+            annee_construction = row["annee_construction"] if pd.notna(row["annee_construction"]) else None
 
-        duree_jours = (date_fin - date_debut).total_seconds() / 86400
-        if duree_jours > self.DUREE_CRUE_MAX_JOURS:
-            return False
+            phrase = ""
+            if annee_construction is not None and oued and capacite is not None:
+                phrase += (f"Construit en {int(annee_construction)} sur l'oued {oued}, "
+                           f"présentant une capacité de {capacite} Mm3. ")
 
-        temps_base_min = pd.to_numeric(row.get("temps_base_min"), errors="coerce")
-        if pd.notna(temps_base_min) and (temps_base_min / 1440) > self.DUREE_CRUE_MAX_JOURS:
-            return False
+            phrase += (f"Le volume des apports de l'année hydrologique "
+                       f"{self.annee}/{self.annee+1} ")
+            phrase += f"est de {apport} Mm3" if apport is not None else "n'est pas disponible"
+            phrase += f" contre {apport_normal} Mm3 comme apport normal." if apport_normal is not None else "."
 
-        return True
-
-    def _filtrer_crues_fiables(self, crues_df, code_station=""):
-        """Ne garde, dans le tableau des crues ET pour le choix de la crue
-        de reference trace en 6/Hydrogramme de crue, que les evenements
-        dont la duree/les valeurs sont plausibles. Si la crue de debit
-        maximal n'est pas fiable, on considere qu'on n'a pas de crue
-        exploitable pour cette station cette annee-la (on retombe sur
-        'Pas de crue' plutot que d'afficher un calcul douteux)."""
-        if crues_df is None or crues_df.empty:
-            return crues_df
-
-        crues_df = crues_df.copy()
-        crues_df["debit_max_m3s"] = pd.to_numeric(crues_df["debit_max_m3s"], errors="coerce")
-        idx_max = crues_df["debit_max_m3s"].idxmax()
-        crue_max_row = crues_df.loc[idx_max]
-
-        if not self._crue_est_fiable(crue_max_row):
-            print(f"     Crue de {code_station} jugee non fiable (duree/valeurs incoherentes) -> 'Pas de crue'")
-            return crues_df.iloc[0:0]
-
-        return crues_df
+            elements.append(Paragraph(f"<b>-Barrage {row['nom_barrage']}</b> : {phrase}", style_puce))
+        return elements
 
     def build_station_report_data(self, code_station, nom_station):
         """Construit le rapport complet d'une station"""
         stats = self.get_statistiques(code_station)
         debits = self.get_debits_journaliers(code_station)
-        crues = self._filtrer_crues_fiables(self.get_crues(code_station), code_station)
+        crues = self.get_crues(code_station)
         tableau_debits = self.get_tableau_debits_moyens_journaliers(code_station)
-        etalonnage_path = self._plot_courbe_etalonnage(code_station)
+        etalonnage_path = self._plot_courbe_etalonnage(code_station, nom_station)
+        etalonnage_bareme = self._tableau_etalonnage_bareme(code_station)
 
         stats_row = stats.iloc[0].to_dict() if not stats.empty else {}
         hydrogramme_path = None
         hydrogramme_crue_path = None
+        hydrogramme_crue_message = None
 
         if not debits.empty:
             hydrogramme_path = self.generer_hydrogramme_annuel(debits, code_station, nom_station)
         if not crues.empty:
-            hydrogramme_crue_path = self._plot_hydrogramme_crue_principale(crues, code_station, nom_station)
+            hydrogramme_crue_path, hydrogramme_crue_message = self._plot_hydrogramme_crue_principale(
+                crues, code_station, nom_station
+            )
 
         return {
             "code_station": code_station,
@@ -1026,7 +1262,9 @@ class AgentEdition:
             "tableau_debits_moyens_journaliers": tableau_debits,
             "crues": crues,
             "etalonnage_path": etalonnage_path,
+            "etalonnage_bareme": etalonnage_bareme,
             "hydrogramme_crue_path": hydrogramme_crue_path,
+            "hydrogramme_crue_message": hydrogramme_crue_message,
             "hydrogramme_path": hydrogramme_path,
         }
 
@@ -1036,8 +1274,6 @@ class AgentEdition:
         
         fig, ax = plt.subplots(figsize=(14, 6))
         ax.plot(df_debits['jour'], df_debits['debit_moyen'], color='#1a5276', linewidth=1.5)
-        ax.set_xlim(df_debits['jour'].min(), df_debits['jour'].max())
-        ax.margins(x=0)
         
         moyenne = df_debits['debit_moyen'].mean()
         ax.axhline(y=moyenne, color='#27ae60', linestyle='--', label=f'Moyenne: {moyenne:.2f} m³/s')
@@ -1047,11 +1283,14 @@ class AgentEdition:
         ax.set_title(f'Hydrogramme annuel - {nom_station} ({self.annee})')
         ax.xaxis.set_major_formatter(mdates.DateFormatter('%b'))
         ax.xaxis.set_major_locator(mdates.MonthLocator())
+        # La courbe doit commencer exactement sur l'axe des ordonnees, sans
+        # la marge horizontale ajoutee par defaut par matplotlib.
+        ax.set_xlim(df_debits['jour'].min(), df_debits['jour'].max())
         ax.legend()
         ax.grid(True, alpha=0.3)
         
         plt.tight_layout()
-        filename = f"output/graphs/hydrogramme_{code_station}_{self.annee}.png"
+        filename = os.path.join(self._dossier_graphes, f"hydrogramme_{code_station}_{self.annee}.png")
         fig.savefig(filename, dpi=300, bbox_inches='tight')
         plt.close(fig)
         return filename
@@ -1116,6 +1355,8 @@ class AgentEdition:
                                   fontSize=18, alignment=TA_CENTER, spaceAfter=30))
         styles.add(ParagraphStyle(name='CustomHeading', parent=styles['Heading2'], 
                                   fontSize=14, spaceBefore=20, spaceAfter=10))
+        styles.add(ParagraphStyle(name='TOCSectionEntry', parent=styles['Heading2'],
+                                  fontSize=14, spaceBefore=20, spaceAfter=10))
         styles.add(ParagraphStyle(name='CustomBody', parent=styles['Normal'], 
                                   fontSize=10, spaceAfter=6))
         styles.add(ParagraphStyle(name='SectionTitle', parent=styles['Normal'], fontSize=9, leading=10, spaceAfter=2))
@@ -1123,7 +1364,7 @@ class AgentEdition:
                                   fontSize=16, alignment=TA_CENTER, spaceBefore=30, spaceAfter=20))
         
         elements = []
-        
+
         # Page de garde (pas d'en-tete/pied de page dessus, voir _header_footer)
         elements.append(Paragraph("REPUBLIQUE TUNISIENNE", styles['CustomTitle']))
         elements.append(Spacer(1, 0.3*cm))
@@ -1134,7 +1375,29 @@ class AgentEdition:
         elements.append(Spacer(1, 1*cm))
         elements.append(Paragraph(f"Généré le {datetime.now().strftime('%d/%m/%Y %H:%M')}", styles['CustomBody']))
         elements.append(PageBreak())
-        
+
+        # Sommaire (table des matieres reelle, avec numeros de page corrects
+        # grace a doc.multiBuild - deux passes de rendu sont necessaires
+        # pour que la 1ere passe determine les numeros de page utilises
+        # par la 2eme passe pour construire le sommaire).
+        elements.append(Paragraph("Sommaire", styles['CustomTitle']))
+        toc = TableOfContents()
+        toc.levelStyles = [
+            ParagraphStyle(name='TOCNiveau0', fontName='Helvetica-Bold', fontSize=11,
+                           leftIndent=0, firstLineIndent=0, spaceBefore=8, leading=13),
+            ParagraphStyle(name='TOCNiveau1', fontName='Helvetica', fontSize=9,
+                           leftIndent=16, firstLineIndent=0, spaceBefore=2, leading=11),
+        ]
+        elements.append(toc)
+        elements.append(PageBreak())
+
+        # Style de legende centree pour les figures (cartes), et compteur
+        # de figures numerote de facon continue sur tout le document -
+        # comme dans l'annuaire manuel ("Figure 1", "Figure 2", ...).
+        style_caption = ParagraphStyle(name='FigureCaption', parent=styles['CustomBody'],
+                                        alignment=1, fontSize=9, spaceBefore=4)
+        figure_num = 1
+
         # Introduction
         elements.append(Paragraph("INTRODUCTION", styles['CustomHeading']))
         elements.append(Paragraph(
@@ -1148,6 +1411,53 @@ class AgentEdition:
             "de l'annuaire hydrologique officiel.",
             styles['CustomBody']
         ))
+        elements.append(Spacer(1, 0.3*cm))
+        elements.append(Paragraph("Ainsi dans ce qui suit on trouvera :", styles['CustomBody']))
+
+        style_puce1 = ParagraphStyle(name='Puce1', parent=styles['CustomBody'], leftIndent=14, spaceAfter=4)
+        style_puce2 = ParagraphStyle(name='Puce2', parent=styles['CustomBody'], leftIndent=28, spaceAfter=2)
+
+        elements.append(Paragraph("• Pour chaque gouvernorat :", style_puce1))
+        for item in [
+            "Sa situation géographique ;",
+            f"Les précipitations de l'année hydrologique {self.annee}-{self.annee+1} ;",
+            "Les ressources de surface ;",
+            "Une carte de situation des stations ;",
+            "Un tableau d'identification des stations hydrométriques dont les données sont "
+            "publiées dans le présent annuaire.",
+        ]:
+            elements.append(Paragraph(f"› {item}", style_puce2))
+
+        elements.append(Paragraph("• Pour chaque station hydrométrique :", style_puce1))
+        for item in [
+            "Un tableau annuel des débits moyens journaliers ;",
+            "Les caractéristiques de la station ;",
+            "L'étalonnage utilisé ;",
+            "Un tableau des caractéristiques des crues ;",
+            "L'hydrogramme de la plus importante crue ;",
+            f"L'hydrogramme de l'année hydrologique {self.annee}-{self.annee+1} ;",
+            "Une liste chronologique des résultats des jaugeages d'étiage pour les points de "
+            "mesures et les stations principales ainsi que les résultats d'analyses de "
+            "salinité et de turbidité.",
+        ]:
+            elements.append(Paragraph(f"› {item}", style_puce2))
+
+        elements.append(Spacer(1, 0.2*cm))
+        elements.append(Paragraph(
+            "<i>Note : les précipitations, les ressources de surface (barrages) et les "
+            "jaugeages d'étiage / analyses de salinité et turbidité ne sont pas encore inclus "
+            "dans cette version, faute de source de données actuellement disponible.</i>",
+            styles['SectionTitle']
+        ))
+
+        carte_pays_path = self.cartographie.carte_pays()
+        carte_pays_img = self._safe_image(carte_pays_path, width=11*cm, height=14.4*cm)
+        if carte_pays_img:
+            elements.append(Spacer(1, 0.3*cm))
+            elements.append(carte_pays_img)
+            elements.append(Paragraph(f"Figure {figure_num} : Carte du découpage administratif", style_caption))
+            figure_num += 1
+
         elements.append(PageBreak())
         
         # Traiter chaque gouvernorat
@@ -1163,61 +1473,94 @@ class AgentEdition:
             print(f"\nGouvernorat: {gouv} ({len(stations)} stations)")
             
             # Page de présentation du gouvernorat
-            doc.gouvernorat = gouv
-            doc.station_name = ""
-            
             gouv_title = Paragraph(f"GOUVERNORAT DE {gouv}", styles['GouvTitle'])
             elements.append(gouv_title)
             elements.append(Spacer(1, 0.3*cm))
 
             # 1/ Situation geographique
-            elements.append(Paragraph("1/ Situation géographique", styles['CustomHeading']))
-            elements.append(Paragraph(self._situation_geographique_text(stations_reseau, gouv), styles['CustomBody']))
-
-            # 2/ Precipitations de l'annee hydrologique
-            precip_section = self._section_precipitations(gouv)
-            elements.append(Paragraph("2/ Précipitations de l'année hydrologique", styles['CustomHeading']))
-            if precip_section:
-                elements.append(precip_section)
+            # Chaque section (titre + contenu) est groupee via KeepTogether
+            # plutot que separee par un PageBreak() fixe : les PageBreak
+            # systematiques forcaient une page quasi vide des qu'une
+            # section (ex: une carte de 11cm) ne remplissait pas toute la
+            # page precedente - meme probleme que celui corrige pour les
+            # fiches station (section 4/5/6/7).
+            section_1_group = [
+                Paragraph("1/ Situation géographique", styles["TOCSectionEntry"]),
+                Paragraph(self._situation_geographique_text(stations_reseau, gouv), styles['CustomBody']),
+                Spacer(1, 0.2*cm),
+            ]
+            localisation_path, localisation_titre = self._carte_gouvernorat_reel(gouv)
+            localisation_img = self._safe_image(localisation_path, width=10*cm, height=11.6*cm)
+            if localisation_img:
+                section_1_group.append(localisation_img)
+                section_1_group.append(Paragraph(f"Figure {figure_num} : {localisation_titre}", style_caption))
+                figure_num += 1
             else:
-                elements.append(Paragraph(
+                section_1_group.append(Paragraph(
+                    "Carte de localisation non disponible (geopandas absent, ou fond de carte "
+                    "data/gouvernorats_tunisie.geojson introuvable).",
+                    styles['CustomBody']
+                ))
+            elements.append(KeepTogether(section_1_group))
+            elements.append(Spacer(1, 0.3*cm))
+
+            # 2/ Precipitations de l'annee hydrologique + 3/ Ressources de
+            # surface : groupees ensemble (section 2 est un simple
+            # placeholder tant que les precipitations ne sont pas en base).
+            section_23_group = [Paragraph("2/ Précipitations de l'année hydrologique", styles["TOCSectionEntry"])]
+            precip_section = self._section_precipitations(gouv)
+            if precip_section:
+                section_23_group.append(precip_section)
+            else:
+                section_23_group.append(Paragraph(
                     "Données de précipitations non disponibles dans la base actuelle.",
                     styles['CustomBody']
                 ))
-
-            # 3/ Ressources de surface
+            section_23_group.append(Spacer(1, 0.2*cm))
+            section_23_group.append(Paragraph("3/ Ressources de surface", styles["TOCSectionEntry"]))
             ressources_section = self._section_ressources_surface(gouv)
-            elements.append(Paragraph("3/ Ressources de surface", styles['CustomHeading']))
             if ressources_section:
-                elements.append(ressources_section)
+                section_23_group.extend(ressources_section)
             else:
-                elements.append(Paragraph(
+                section_23_group.append(Paragraph(
                     "Données de barrages / ressources de surface non disponibles dans la base actuelle.",
                     styles['CustomBody']
                 ))
-            elements.append(PageBreak())
+            elements.append(KeepTogether(section_23_group))
+            elements.append(Spacer(1, 0.3*cm))
 
             # 4/ Carte de situation des stations
-            elements.append(Paragraph("4/ Carte de situation des stations", styles['CustomHeading']))
-            carte_path = self._carte_stations_gouvernorat(stations_reseau, gouv)
+            section_4_group = [Paragraph("4/ Carte de situation des stations", styles["TOCSectionEntry"])]
+            carte_path, carte_titre = self._carte_stations_gouvernorat(stations_reseau, gouv)
             carte_img = self._safe_image(carte_path, width=14*cm, height=11*cm)
             if carte_img:
-                elements.append(carte_img)
+                section_4_group.append(carte_img)
+                section_4_group.append(Paragraph(f"Figure {figure_num} : {carte_titre}", style_caption))
+                figure_num += 1
+                section_4_group.append(Spacer(1, 0.15*cm))
+                section_4_group.append(Paragraph(
+                    "<i>Source : limites administratives, cours d'eau et modèle numérique de terrain "
+                    "(MNT) - DGRE. Positionnement des stations à partir de leurs coordonnées UTM.</i>",
+                    styles['SectionTitle']
+                ))
             else:
-                elements.append(Paragraph("Carte non disponible (coordonnées manquantes).", styles['CustomBody']))
-            elements.append(PageBreak())
+                section_4_group.append(Paragraph("Carte non disponible (coordonnées manquantes).", styles['CustomBody']))
+            elements.append(KeepTogether(section_4_group))
+            elements.append(Spacer(1, 0.3*cm))
 
             # 5/ Tableau d'identification des stations
             elements.append(Paragraph(
                 f"5/ Identification des stations hydrométriques du gouvernorat de {gouv}",
-                styles['CustomHeading']
+                styles['TOCSectionEntry']
             ))
             elements.append(self._tableau_identification_stations(stations_reseau, gouv))
             elements.append(Spacer(1, 0.2*cm))
             elements.append(Paragraph(
-                "<i>Note : les colonnes \"Mesures effectuées\" (DMJ, JC, JE, RS, TP) du tableau "
-                "manuel ne sont pas incluses ici, cette donnée n'étant disponible dans aucune "
-                "table de la base actuelle.</i>",
+                "<i>Note : la colonne \"DMJ\" indique si des débits moyens journaliers sont "
+                "disponibles en base pour cette station et cette année. Les colonnes JC "
+                "(jaugeages de crue), JE (jaugeages d'étiage), RS (résultats de salinité) et TP "
+                "(turbidité) affichent \"Non\" par défaut, ces données n'étant pas encore "
+                "disponibles dans la base actuelle.</i>",
                 styles['SectionTitle']
             ))
 
@@ -1230,17 +1573,15 @@ class AgentEdition:
                 total_stations += 1
                 
                 print(f"  Station: {nom} ({code})")
-                
-                # Réinitialiser le nom de la station pour l'en-tête
-                doc.station_name = f"Station : {nom} - {code}"
-                doc.gouvernorat = gouv
-                
+
                 report_data = self.build_station_report_data(code, nom)
                 stats = report_data["caracteristiques_hydrometriques"]
                 tableau_debits = report_data["tableau_debits_moyens_journaliers"]
                 crues = report_data["crues"]
                 etalonnage_path = report_data["etalonnage_path"]
+                etalonnage_bareme = report_data["etalonnage_bareme"]
                 hydrogramme_crue_path = report_data["hydrogramme_crue_path"]
+                hydrogramme_crue_message = report_data["hydrogramme_crue_message"]
                 img_path = report_data["hydrogramme_path"]
                 
                 if not stats:
@@ -1249,14 +1590,27 @@ class AgentEdition:
                 
                 # ===== PAGE DE LA STATION =====
                 station_title = Paragraph(f"<b>Station : {nom} - {code}</b>", styles['CustomHeading'])
-                section_1 = self._station_info_table(code, nom, font_size=6)
+                section_1 = self._station_info_table(code, nom, font_size=5)
 
-                # Etalonnage (gauche)
+                # Etalonnage (gauche) : meme image d'etalonnage pour toutes
+                # les stations (fournie par l'utilisateur), plutot que le
+                # graphique/tableau genere dynamiquement depuis la base
+                # (aucune donnee de bareme n'y est actuellement disponible).
                 etalonnage_elements = [
                     Paragraph("<b>2/ Étalonnage de la station :</b>", styles['SectionTitle']),
                     Paragraph("Valide du 01/01/2012 jusqu'à nos jours", styles['SectionTitle'])
                 ]
-                if etalonnage_path:
+                chemin_image_generique = os.path.join(
+                    os.path.dirname(os.path.abspath(__file__)), "..", "..", "data", "etalonnage_generique.png"
+                )
+                chemin_image_generique = os.path.normpath(chemin_image_generique)
+                etalonnage_img_generique = self._safe_image(chemin_image_generique, width=4.4*cm, height=5.7*cm)
+                if etalonnage_img_generique:
+                    etalonnage_elements.append(etalonnage_img_generique)
+                elif etalonnage_bareme:
+                    # Repli : donnees reelles disponibles pour cette station
+                    etalonnage_elements.append(Spacer(1, 0.1*cm))
+                    etalonnage_elements.append(etalonnage_bareme)
                     etalonnage_img = self._safe_image(etalonnage_path, width=5.8*cm, height=4.2*cm)
                     if etalonnage_img:
                         etalonnage_elements.append(etalonnage_img)
@@ -1300,7 +1654,7 @@ class AgentEdition:
                 ]
                 section_4 = self._section_table("4/Caractéristiques hydrométriques de la station:", caracs_rows, col_widths=(7.2*cm, 8.7*cm), font_size=8)
 
-                page1 = KeepTogether([
+                page1 = [
                     station_title,
                     Spacer(1, 0.1*cm),
                     section_1,
@@ -1308,38 +1662,63 @@ class AgentEdition:
                     top_panel,
                     Spacer(1, 0.1*cm),
                     section_4
-                ])
-                elements.append(page1)
-                elements.append(PageBreak())
+                ]
+                elements.extend(page1)
+                elements.append(Spacer(1, 0.15*cm))
 
                 # ===== PAGE 2 =====
-                crues_table = self._crues_table(crues)
                 section_5_title = Paragraph("<b>5/Caractéristiques des crues</b>", styles['SectionTitle'])
-                if crues_table is None:
-                    crues_table = Paragraph(
-                        "<para alignment='center'><b>Pas de crue</b></para>", styles['SectionTitle']
+                if hydrogramme_crue_message:
+                    # Capteur suspect detecte : la "crue" trouvee n'est pas
+                    # une vraie crue, donc on n'affiche pas son tableau non
+                    # plus (juste le constat), plutot que de montrer des
+                    # valeurs trompeuses avec un avertissement a cote.
+                    crues_table = Paragraph("Aucune crue détectée", styles['SectionTitle'])
+                else:
+                    crues_table = self._crues_table(crues)
+                    if crues_table is None:
+                        crues_table = Paragraph("Aucune crue détectée", styles['SectionTitle'])
+
+                crues_avertissement = None
+                if hydrogramme_crue_message:
+                    crues_avertissement = Paragraph(
+                        f"<i>⚠ {hydrogramme_crue_message}</i>", styles['SectionTitle']
                     )
 
                 hydro_crue_img = self._safe_image(hydrogramme_crue_path, width=8.7*cm, height=6.0*cm)
                 if hydro_crue_img is None:
-                    # Pas de crue fiable pour cette station : on laisse la
-                    # section vide plutot que d'afficher un trace douteux
-                    # (voir _filtrer_crues_fiables / _crue_est_fiable).
-                    hydro_crue_img = Spacer(1, 0.1*cm)
+                    if hydrogramme_crue_message:
+                        hydro_crue_img = Paragraph(f"<i>{hydrogramme_crue_message}</i>", styles['SectionTitle'])
+                    else:
+                        hydro_crue_img = Paragraph("Hydrogramme de crue non disponible", styles['SectionTitle'])
 
                 hydro_annuel_img = self._safe_image(img_path, width=14.7*cm, height=7.2*cm)
-                if hydro_annuel_img is None:
+                if hydrogramme_crue_message:
+                    # Capteur suspect detecte : par coherence, on n'affiche pas
+                    # non plus l'hydrogramme annuel (meme station, meme risque
+                    # que les donnees affichees soient trompeuses).
+                    hydro_annuel_img = Paragraph(f"<i>{hydrogramme_crue_message}</i>", styles['SectionTitle'])
+                elif hydro_annuel_img is None:
                     hydro_annuel_img = Paragraph("Hydrogramme annuel non disponible", styles['SectionTitle'])
 
+                section_5_group = [section_5_title, crues_table]
+                if crues_avertissement:
+                    section_5_group.append(Spacer(1, 0.1*cm))
+                    section_5_group.append(crues_avertissement)
+
+                # KeepTogether sur chaque groupe titre+contenu : comme la
+                # PageBreak() fixe entre les sections 4 et 5 a ete retiree
+                # (elle creait une page quasi vide quand la section 3
+                # remplissait deja la 1ere page - voir section_4 ci-dessus),
+                # le contenu flotte librement d'une page a l'autre et il
+                # faut eviter qu'un titre se retrouve seul en bas de page,
+                # separe de son tableau/image.
                 page2 = [
-                    section_5_title,
-                    crues_table,
+                    KeepTogether(section_5_group),
                     Spacer(1, 0.15*cm),
-                    Paragraph("6/Hydrogramme de crue:", styles['CustomHeading']),
-                    hydro_crue_img,
+                    KeepTogether([Paragraph("6/Hydrogramme de crue", styles['CustomHeading']), hydro_crue_img]),
                     Spacer(1, 0.15*cm),
-                    Paragraph("7/Hydrogramme annuel", styles['CustomHeading']),
-                    hydro_annuel_img,
+                    KeepTogether([Paragraph("7/Hydrogramme annuel", styles['CustomHeading']), hydro_annuel_img]),
                 ]
                 elements.extend(page2)
                 
@@ -1347,7 +1726,7 @@ class AgentEdition:
                 if total_stations < len(df_stations):
                     elements.append(PageBreak())
         
-        doc.build(elements)
+        doc.multiBuild(elements)
         print(f"\nPDF genere : {filename}")
         print(f"Total: {total_stations} stations traitees sur {len(df_stations)}")
         return filename

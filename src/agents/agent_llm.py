@@ -11,6 +11,10 @@ import requests
 import json
 import time
 from datetime import datetime
+from dotenv import load_dotenv
+
+load_dotenv()  # s'assure que LLM_MODEL / LLM_HOST sont lus même si ce module
+                # est importé/instancié avant que main.py n'appelle load_dotenv()
 
 class AgentLLM:
     """
@@ -18,49 +22,72 @@ class AgentLLM:
     Modèles recommandés : mistral, llama3, phi3, gemma
     """
     
-    def __init__(self, model="mistral", host="http://localhost:11434"):
+    def __init__(self, model=None, host=None):
         """
         Initialise l'agent LLM avec un modèle Ollama
-        
+
         Args:
             model: Nom du modèle Ollama (mistral, llama3, phi3, etc.)
+                   Si non fourni, lit LLM_MODEL dans .env (fallback: "mistral")
             host: URL du serveur Ollama
+                   Si non fourni, lit LLM_HOST dans .env (fallback: "http://localhost:11434")
         """
-        self.model = model
-        self.host = host
-        self.api_url = f"{host}/api/generate"
-        self.chat_url = f"{host}/api/chat"
+        self.model = model or os.getenv("LLM_MODEL", "mistral")
+        self.host = host or os.getenv("LLM_HOST", "http://localhost:11434")
+        self.api_url = f"{self.host}/api/generate"
+        self.chat_url = f"{self.host}/api/chat"
         self.available = False
         self.model_loaded = False
+        self.last_check = None
+        self.available_models = []
+        self.status_message = "Non vérifié"
         
         # Vérifier la disponibilité d'Ollama
         self._check_availability()
     
     def _check_availability(self):
         """Vérifie si Ollama est disponible"""
+        self.last_check = datetime.utcnow().isoformat() + "Z"
         try:
             response = requests.get(f"{self.host}/api/tags", timeout=5)
             if response.status_code == 200:
                 models = response.json().get('models', [])
                 model_names = [m.get('name', '') for m in models]
+                self.available_models = model_names
                 
                 # Vérifier si le modèle demandé est disponible
                 if any(self.model in name for name in model_names):
                     self.available = True
                     self.model_loaded = True
+                    self.status_message = f"Modèle {self.model} chargé"
                     print(f"✅ LLM disponible : {self.model}")
                 else:
                     self.available = True
                     self.model_loaded = False
+                    self.status_message = f"Modèle {self.model} absent"
                     print(f"⚠️ Modèle {self.model} non trouvé.")
                     print(f"   Modèles disponibles : {', '.join(model_names)}")
                     print(f"   Installez-le avec : ollama pull {self.model}")
             else:
                 self.available = False
+                self.status_message = f"Ollama a renvoyé {response.status_code}"
                 print("⚠️ Ollama n'est pas disponible. Vérifiez qu'il est lancé (ollama serve)")
         except Exception as e:
             self.available = False
+            self.status_message = f"Erreur de connexion: {e}"
             print(f"⚠️ Erreur de connexion à Ollama : {e}")
+
+    def get_status(self):
+        """Retourne un état simple de disponibilité pour l'UI."""
+        return {
+            "available": self.available,
+            "model_loaded": self.model_loaded,
+            "model": self.model,
+            "host": self.host,
+            "available_models": list(self.available_models),
+            "last_check": self.last_check,
+            "status_message": self.status_message,
+        }
     
     def generate(self, prompt, system_prompt=None, temperature=0.7, max_tokens=500):
         """
@@ -89,6 +116,8 @@ class AgentLLM:
                 "model": self.model,
                 "prompt": full_prompt,
                 "stream": False,
+                "keep_alive": "30m",  # garde le modèle chargé en mémoire entre les appels
+                                       # (évite de recharger ~7B à chaque question)
                 "options": {
                     "temperature": temperature,
                     "num_predict": max_tokens
@@ -98,7 +127,7 @@ class AgentLLM:
             response = requests.post(
                 self.api_url,
                 json=payload,
-                timeout=60
+                timeout=180  # inférence CPU sans GPU peut être lente, surtout au 1er appel
             )
             
             if response.status_code == 200:
@@ -115,17 +144,25 @@ class AgentLLM:
             print(f"❌ Erreur LLM: {e}")
             return None
     
-    def chat(self, messages, temperature=0.7, max_tokens=500):
+    def chat(self, messages, temperature=0.7, max_tokens=500, tools=None):
         """
-        Mode chat avec historique des messages
-        
+        Mode chat avec historique des messages, avec support optionnel du
+        function/tool calling natif d'Ollama (transmis tel quel au modele,
+        qui repond soit en texte normal, soit avec un appel d'outil selon
+        ce qu'il a appris a l'entrainement).
+
         Args:
             messages: Liste de dictionnaires [{"role": "user", "content": "..."}]
             temperature: Créativité (0-1)
             max_tokens: Nombre max de tokens
-        
+            tools: Liste optionnelle de definitions d'outils (meme format
+                   que celui utilise pour le fine-tuning : name/description/
+                   parameters). Transmis tel quel a l'API /api/chat d'Ollama.
+
         Returns:
-            str: Réponse générée
+            str: Réponse générée (texte brut - peut contenir un appel
+                 d'outil ou du code selon l'entrainement du modele ;
+                 voir agent_orchestrator.py pour l'extraction/le routage)
         """
         if not self.available:
             return None
@@ -135,21 +172,39 @@ class AgentLLM:
                 "model": self.model,
                 "messages": messages,
                 "stream": False,
+                "keep_alive": "30m",
                 "options": {
                     "temperature": temperature,
                     "num_predict": max_tokens
                 }
             }
+            if tools:
+                payload["tools"] = tools
             
             response = requests.post(
                 self.chat_url,
                 json=payload,
-                timeout=60
+                timeout=180
             )
             
             if response.status_code == 200:
                 result = response.json()
-                return result.get('message', {}).get('content', '').strip()
+                message = result.get('message', {})
+                # Si le serveur/modele renvoie un appel d'outil structure
+                # (certains backends Ollama recents le font pour les
+                # modeles compatibles), on le reserialise en texte pour
+                # rester coherent avec le format <tool_call> attendu par
+                # agent_orchestrator.py - sinon on renvoie simplement le
+                # contenu texte (cas le plus courant avec notre modele
+                # fine-tune, qui produit deja le JSON dans le texte).
+                if message.get('tool_calls'):
+                    appel = message['tool_calls'][0].get('function', {})
+                    return (
+                        "<tool_call>\n"
+                        + json.dumps({"name": appel.get("name"), "arguments": appel.get("arguments", {})}, ensure_ascii=False)
+                        + "\n</tool_call>"
+                    )
+                return message.get('content', '').strip()
             else:
                 print(f"❌ Erreur LLM chat: {response.status_code}")
                 return None
@@ -158,6 +213,49 @@ class AgentLLM:
             print(f"❌ Erreur LLM chat: {e}")
             return None
     
+    def get_embedding(self, text, model=None):
+        """
+        Génère un embedding vectoriel pour le texte fourni.
+        
+        Args:
+            text (str): Le texte à vectoriser
+            model (str, optional): Le modèle d'embedding à utiliser (défaut: "nomic-embed-text")
+            
+        Returns:
+            list: Une liste de floats représentant le vecteur, ou None en cas d'erreur
+        """
+        if not self.available:
+            return None
+            
+        embed_model = model or "nomic-embed-text"
+        url = f"{self.host}/api/embeddings"
+        
+        try:
+            payload = {
+                "model": embed_model,
+                "prompt": text
+            }
+            response = requests.post(url, json=payload, timeout=60)
+            if response.status_code == 200:
+                return response.json().get("embedding")
+            else:
+                # Essayer avec le nouvel endpoint /api/embed au cas où
+                url_new = f"{self.host}/api/embed"
+                payload_new = {
+                    "model": embed_model,
+                    "input": text
+                }
+                response_new = requests.post(url_new, json=payload_new, timeout=60)
+                if response_new.status_code == 200:
+                    embeddings = response_new.json().get("embeddings")
+                    if embeddings and len(embeddings) > 0:
+                        return embeddings[0]
+                print(f"❌ Erreur lors de la génération de l'embedding: {response.status_code} - {response.text}")
+                return None
+        except Exception as e:
+            print(f"❌ Exception lors de la génération de l'embedding: {e}")
+            return None
+
     def enrich_response(self, question, data, intent):
         """
         Enrichit les données brutes avec une réponse en langage naturel
@@ -183,11 +281,10 @@ class AgentLLM:
 Instructions importantes :
 1. Réponds UNIQUEMENT en français
 2. Utilise les données fournies, ne les invente pas
-3. Sois précis et professionnel
+3. Sois précis, sobre et professionnel (registre institutionnel, sans emoji)
 4. Structure ta réponse de manière claire
-5. Utilise des emojis pertinents (📊 🌊 📈 🏆 💧)
-6. Si les données sont manquantes, indique-le clairement
-7. Ne donne pas d'informations qui ne sont pas dans les données"""
+5. Si les données sont manquantes, indique-le clairement
+6. Ne donne pas d'informations qui ne sont pas dans les données"""
 
         # Formater les données pour le prompt
         if isinstance(data, list):
@@ -224,7 +321,7 @@ Si c'est une liste, numérote les éléments.
 Sois concis mais complet.
 """
         
-        response = self.generate(prompt, system_prompt, temperature=0.3)
+        response = self.generate(prompt, system_prompt, temperature=0.3, max_tokens=300)
         
         if response:
             return response

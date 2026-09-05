@@ -149,12 +149,46 @@ CREATE TABLE IF NOT EXISTS anomalies (
 );
 
 -- ============================================================
+-- 9. TABLE : barrage (référentiel des barrages)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS barrage (
+    id SERIAL PRIMARY KEY,
+    code_barrage VARCHAR(50) UNIQUE NOT NULL,
+    nom_barrage VARCHAR(100) NOT NULL,
+    gouvernorat VARCHAR(50),
+    zone VARCHAR(20),
+    annee_construction INTEGER,
+    oued VARCHAR(100),
+    capacite_hm3 DECIMAL(10,3),
+    apport_normal_hm3 DECIMAL(10,3),
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+-- ============================================================
+-- 10. TABLE : barrage_annuel (cumulés annuels - section "Ressources de
+-- surface" de l'annuaire). Une ligne par barrage et par année
+-- hydrologique, valeurs en millions de m3 (hm3) comme le bulletin DGRE.
+-- ============================================================
+CREATE TABLE IF NOT EXISTS barrage_annuel (
+    id SERIAL PRIMARY KEY,
+    code_barrage VARCHAR(50) NOT NULL REFERENCES barrage(code_barrage),
+    annee INTEGER NOT NULL,
+    apport_cumule_hm3 DECIMAL(12,3),
+    lacher_cumule_hm3 DECIMAL(12,3),
+    stock_fin_annee_hm3 DECIMAL(12,3),
+    stock_pourcentage DECIMAL(5,1),
+    created_at TIMESTAMP DEFAULT NOW(),
+    UNIQUE(code_barrage, annee)
+);
+
+-- ============================================================
 -- INDEXES
 -- ============================================================
 CREATE INDEX idx_hauteurs_station_date ON hauteurs_brutes(code_station, date_heure);
 CREATE INDEX idx_debits_journaliers_station ON debits_journaliers(code_station, jour);
 CREATE INDEX idx_stats_station_annee ON statistiques_annuelles(code_station, annee);
 CREATE INDEX idx_crues_station_annee ON crues(code_station, annee);
+CREATE INDEX idx_barrage_annuel_annee ON barrage_annuel(annee);
 
 -- ============================================================
 -- MESSAGE
