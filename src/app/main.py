@@ -30,7 +30,8 @@ load_dotenv()
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from agents.agent_orchestrator import AgentOrchestrator
-from theme import apply_theme, hero_banner, section_title, kpi_card, feature_cards, health_cards, COLOR_TEAL, COLOR_TERRACOTTA, COLOR_MUTED
+from theme import apply_theme, hero_banner, section_title, kpi_card, feature_cards, COLOR_TEAL, COLOR_TERRACOTTA, COLOR_MUTED, icon_svg
+from utils.upload_importer import build_default_report
 
 RACINE_PROJET = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -199,36 +200,6 @@ def _health_snapshot():
 
 def render_health_panel():
     snapshot = _health_snapshot()
-    health_cards([
-        {
-            "label": "Base PostgreSQL",
-            "value": snapshot["db"]["value"],
-            "detail": snapshot["db"]["detail"],
-            "state": snapshot["db"]["state"],
-            "state_label": snapshot["db"]["state_label"],
-        },
-        {
-            "label": "Service Ollama",
-            "value": snapshot["llm"]["value"],
-            "detail": snapshot["llm"]["detail"],
-            "state": snapshot["llm"]["state"],
-            "state_label": snapshot["llm"]["state_label"],
-        },
-        {
-            "label": "Modèle principal",
-            "value": snapshot["model"]["value"],
-            "detail": snapshot["model"]["detail"],
-            "state": snapshot["model"]["state"],
-            "state_label": snapshot["model"]["state_label"],
-        },
-        {
-            "label": "Agents chargés",
-            "value": snapshot["agents"]["value"],
-            "detail": snapshot["agents"]["detail"],
-            "state": snapshot["agents"]["state"],
-            "state_label": snapshot["agents"]["state_label"],
-        },
-    ])
     st.caption(f"État contrôlé à {snapshot['checked_at']}")
 
 
@@ -259,6 +230,88 @@ def render_quick_launch():
         with col:
             if st.button(action, width="stretch", key=f"quick_{action}"):
                 _executer_requete(action)
+
+
+# ============================================================
+# IMPORT DE FICHIERS (bouton bien visible, panneau depliable)
+# ============================================================
+
+def render_import_section():
+    """Bloc d'import affiché comme un vrai bouton d'action plutôt qu'un
+    simple expander discret. Un clic ouvre un panneau dédié avec le
+    file_uploader (taille max définie dans .streamlit/config.toml)."""
+    if "show_import_panel" not in st.session_state:
+        st.session_state.show_import_panel = False
+
+    st.markdown('<div class="import-launch-btn">', unsafe_allow_html=True)
+    label = (
+        "Fermer l'import de fichiers"
+        if st.session_state.show_import_panel
+        else "Importer des fichiers de débits (.xls, .xlsx, .csv)"
+    )
+    if st.button(label, width="stretch", key="toggle_import_panel"):
+        st.session_state.show_import_panel = not st.session_state.show_import_panel
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    if not st.session_state.show_import_panel:
+        return
+
+    st.markdown('<div class="import-panel">', unsafe_allow_html=True)
+    st.markdown(
+        f'<div class="import-panel-title">{icon_svg("upload", 20)}'
+        f'<span>Actualiser la base de données depuis des fichiers</span></div>',
+        unsafe_allow_html=True,
+    )
+    st.caption(
+        "Déposez un ou plusieurs fichiers .xls, .xlsx ou .csv contenant des débits. "
+        "Le système essaye de faire la correspondance des stations puis insère seulement les nouvelles lignes."
+    )
+    fichiers_uploades = st.file_uploader(
+        "Joindre des fichiers",
+        type=["xls", "xlsx", "csv"],
+        accept_multiple_files=True,
+        label_visibility="visible",
+    )
+    confirmer = st.checkbox("Je confirme l'import dans la base", value=False)
+    lancer_import = st.button("Lancer l'import", width="stretch", disabled=not fichiers_uploades)
+
+    if lancer_import:
+        if not fichiers_uploades:
+            st.warning("Ajoutez au moins un fichier avant de lancer l'import.")
+        elif not confirmer:
+            st.warning("Cochez la confirmation avant d'écrire dans la base.")
+        else:
+            with st.spinner("Analyse et import en cours…"):
+                fichiers_temp = []
+                upload_dir = os.path.join(RACINE_PROJET, "data", "uploads")
+                os.makedirs(upload_dir, exist_ok=True)
+                for fichier in fichiers_uploades:
+                    cible = os.path.join(upload_dir, fichier.name)
+                    with open(cible, "wb") as f:
+                        f.write(fichier.getbuffer())
+                    fichiers_temp.append(cible)
+
+                try:
+                    rapport = build_default_report(fichiers=fichiers_temp, confirmer=True)
+                    if rapport["statut"] == "importe":
+                        st.success(
+                            f"Import réussi: {rapport['lignes_inserees']} lignes insérées, "
+                            f"{rapport['lignes_ignorees']} déjà présentes ignorées."
+                        )
+                        st.cache_data.clear()
+                        st.cache_resource.clear()
+                        st.rerun()
+                    elif rapport["statut"] == "aucune_nouvelle_donnee":
+                        st.info("Aucune nouvelle donnée à insérer, tout est déjà en base.")
+                    elif rapport["statut"] == "bloque":
+                        st.error("L'import a été bloqué à cause de correspondances douteuses.")
+                        for entree in rapport["douteuses"][:10]:
+                            st.write(f"- {entree['nom_excel']} -> {entree['code_station']} ({entree['nom_db']}) [score={entree['score']:.2f}]")
+                    else:
+                        st.warning(f"Import non terminé: {rapport['statut']}")
+                except Exception as exc:
+                    st.error(f"Erreur pendant l'import: {exc}")
+    st.markdown('</div>', unsafe_allow_html=True)
 
 
 # ============================================================
@@ -298,21 +351,6 @@ def render_dashboard():
         tag="Direction Générale des Ressources en Eau",
     )
 
-    feature_cards([
-        {
-            "title": "Pilotage du réseau",
-            "text": "Consultez la couverture nationale, les gouvernorats et les stations clés dans une vue claire et hiérarchisée.",
-        },
-        {
-            "title": "Lecture rapide des risques",
-            "text": "Repérez les crues les plus importantes et les signaux hydrologiques majeurs sans naviguer dans plusieurs écrans.",
-        },
-        {
-            "title": "Assistant opérationnel",
-            "text": "Demandez un annuaire, une carte ou un recalcul de statistiques en langage naturel, directement depuis l’interface.",
-        },
-    ])
-
     try:
         donnees = _charger_donnees_dashboard()
     except Exception as e:
@@ -323,8 +361,7 @@ def render_dashboard():
 
     render_status_strip()
 
-    st.markdown("### Santé de la plateforme")
-    render_health_panel()
+    render_import_section()
 
     if not stats:
         st.info("Aucune donnée statistique disponible pour le moment. "
@@ -475,12 +512,6 @@ def render_chat():
 
     render_status_strip()
 
-    st.markdown("### Accès rapide")
-    render_quick_launch()
-
-    st.markdown("### Santé de la plateforme")
-    render_health_panel()
-
     if "messages" not in st.session_state:
         st.session_state.messages = [{"role": "assistant", "content": MESSAGE_BIENVENUE}]
 
@@ -544,5 +575,6 @@ with st.sidebar:
 
 if page == PAGE_DASHBOARD:
     render_dashboard()
+
 else:
     render_chat()

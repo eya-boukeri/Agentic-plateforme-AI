@@ -1,6 +1,6 @@
 # Dockerfile
 # Image de base Python 3.11 (stable)
-FROM python:3.11-slim-bookworm
+FROM python:3.11-slim-bullseye
 
 # Variables d'environnement
 ENV PYTHONDONTWRITEBYTECODE=1 \

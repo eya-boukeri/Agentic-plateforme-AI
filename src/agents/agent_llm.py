@@ -19,7 +19,8 @@ load_dotenv()  # s'assure que LLM_MODEL / LLM_HOST sont lus même si ce module
 class AgentLLM:
     """
     Agent LLM utilisant Ollama pour générer des réponses en langage naturel
-    Modèles recommandés : mistral, llama3, phi3, gemma
+    Modèle par défaut : hydrometrie (modèle fine-tuné pour l'hydrométrie tunisienne)
+    Modèles compatibles : hydrometrie, mistral, llama3, phi3, gemma
     """
     
     def __init__(self, model=None, host=None):
@@ -27,12 +28,13 @@ class AgentLLM:
         Initialise l'agent LLM avec un modèle Ollama
 
         Args:
-            model: Nom du modèle Ollama (mistral, llama3, phi3, etc.)
-                   Si non fourni, lit LLM_MODEL dans .env (fallback: "mistral")
+            model: Nom du modèle Ollama (hydrometrie, mistral, llama3, phi3, etc.)
+                   Si non fourni, lit LLM_MODEL dans .env (fallback: "hydrometrie")
             host: URL du serveur Ollama
                    Si non fourni, lit LLM_HOST dans .env (fallback: "http://localhost:11434")
         """
-        self.model = model or os.getenv("LLM_MODEL", "mistral")
+        # ⚠️ CORRECTION : "mistral" → "hydrometrie"
+        self.model = model or os.getenv("LLM_MODEL", "hydrometrie")
         self.host = host or os.getenv("LLM_HOST", "http://localhost:11434")
         self.api_url = f"{self.host}/api/generate"
         self.chat_url = f"{self.host}/api/chat"
@@ -275,16 +277,12 @@ class AgentLLM:
         if not self.model_loaded:
             return self._format_basic(question, data, intent)
         
-        # Construire le prompt système
-        system_prompt = """Tu es un assistant hydrométrique expert de la Direction Générale des Ressources en Eau de Tunisie.
-
-Instructions importantes :
-1. Réponds UNIQUEMENT en français
-2. Utilise les données fournies, ne les invente pas
-3. Sois précis, sobre et professionnel (registre institutionnel, sans emoji)
-4. Structure ta réponse de manière claire
-5. Si les données sont manquantes, indique-le clairement
-6. Ne donne pas d'informations qui ne sont pas dans les données"""
+        # ⚠️ CORRECTION : Prompt système adapté au modèle hydrometrie
+        system_prompt = """Tu es l'assistant agentic de la DGRE pour l'annuaire hydrométrique de la Tunisie.
+Tu réponds aux questions sur les données hydrométriques (débits, crues, statistiques, stations).
+Tu es précis, technique mais accessible.
+Réponds toujours en français.
+Si tu ne connais pas la réponse, dis-le honnêtement."""
 
         # Formater les données pour le prompt
         if isinstance(data, list):
@@ -321,7 +319,12 @@ Si c'est une liste, numérote les éléments.
 Sois concis mais complet.
 """
         
-        response = self.generate(prompt, system_prompt, temperature=0.3, max_tokens=300)
+        # ⚠️ CORRECTION : Utiliser chat() au lieu de generate() pour le modèle hydrometrie
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": prompt}
+        ]
+        response = self.chat(messages, temperature=0.3, max_tokens=300)
         
         if response:
             return response
@@ -451,7 +454,7 @@ if __name__ == "__main__":
     print("="*70)
     
     # Initialiser l'agent
-    llm = AgentLLM(model="mistral")
+    llm = AgentLLM()  # lit LLM_MODEL depuis .env (fallback: hydrometrie)
     
     print(f"\n📦 Modèle: {llm.model}")
     print(f"✅ Disponible: {llm.available}")
@@ -472,6 +475,15 @@ if __name__ == "__main__":
             print("\n🧪 Test de génération:")
             response = llm.generate("Dis 'Bonjour' en français")
             print(f"   Réponse: {response}")
+            
+            # Test de chat
+            print("\n🧪 Test de chat:")
+            messages = [
+                {"role": "system", "content": "Tu es un expert en hydrométrie."},
+                {"role": "user", "content": "Qu'est-ce qu'une station hydrométrique ?"}
+            ]
+            response = llm.chat(messages, max_tokens=200)
+            print(f"   Réponse: {response[:200]}..." if response else "   Pas de réponse")
             
             # Test d'enrichissement
             print("\n🧪 Test d'enrichissement:")
