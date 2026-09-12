@@ -95,108 +95,117 @@ def icon_svg(name, size=20, color="currentColor", stroke_width=1.7):
     )
 
 
-# ============================================================
-# STARFIELD (Uiverse.io by amir_6539, adapte - 3 couches)
-# ============================================================
-# Trois couches de points (box-shadow) :
-# - fine et dense (etoiles lointaines)
-# - moyenne (etoiles intermediaires)
-# - rare et grosse (etoiles proches)
-# Coordonnees reprises du composant d'origine.
-_STARS_SMALL = "501px 811px #fff,1450px 1324px #fff,1093px 1780px #fff,1469px 678px #fff,904px 741px #fff,1160px 781px #fff,1841px 1962px #fff,1630px 1667px #fff,1788px 676px #fff,367px 1734px #fff,1343px 156px #fff,1283px 1142px #fff,1062px 378px #fff,1395px 467px #fff,1017px 1891px #fff,137px 1114px #fff,1767px 1403px #fff,1543px 11px #fff,1078px 181px #fff,1189px 1574px #fff,1697px 1551px #fff,439px 472px #fff,1491px 677px #fff,1364px 599px #fff,34px 382px #fff,1221px 1584px #fff,1266px 1499px #fff,169px 1907px #fff,1219px 1125px #fff,659px 18px #fff,1731px 1959px #fff,332px 1216px #fff,1913px 788px #fff,80px 712px #fff,326px 1605px #fff,574px 1502px #fff,473px 1653px #fff,404px 975px #fff,322px 1797px #fff,425px 1321px #fff,1121px 1797px #fff,731px 647px #fff,891px 1584px #fff,1523px 109px #fff,1379px 244px #fff,865px 1064px #fff,493px 956px #fff,624px 1380px #fff,440px 619px #fff,1630px 767px #fff,955px 1196px #fff,62px 729px #fff,126px 946px #fff,1256px 896px #fff,1444px 256px #fff,661px 1628px #fff,1078px 1716px #fff,300px 737px #fff,1734px 413px #fff,1296px 129px #fff,1771px 1678px #fff,977px 1764px #fff,1879px 549px #fff,665px 1531px #fff,89px 701px #fff,1084px 1183px #fff,1597px 1576px #fff,1354px 1774px #fff,554px 1471px #fff,1469px 287px #fff,887px 106px #fff,1962px 766px #fff,638px 805px #fff,1651px 741px #fff,1517px 1826px #fff,24px 1152px #fff,507px 558px #fff,1262px 652px #fff,246px 1048px #fff,1077px 421px #fff,1866px 1847px #fff,1986px 1561px #fff,704px 632px #fff,1991px 1875px #fff,1227px 395px #fff,45px 1116px #fff,247px 786px #fff,890px 607px #fff,787px 1235px #fff,557px 524px #fff,1582px 1285px #fff,1725px 1366px #fff,952px 747px #fff,251px 458px #fff,1500px 1250px #fff,1999px 1734px #fff,1336px 1955px #fff,1705px 1464px #fff,728px 697px #fff,594px 510px #fff,1345px 1990px #fff,1919px 1803px #fff,1117px 966px #fff,1629px 97px #fff,1046px 1196px #fff,810px 1092px #fff,722px 976px #fff,406px 18px #fff,1665px 1860px #fff,1758px 1628px #fff,1183px 463px #fff,564px 239px #fff,13px 1767px #fff,1482px 1472px #fff,1700px 347px #fff,1362px 244px #fff,1141px 1708px #fff,22px 885px #fff,374px 1309px #fff,1034px 1037px #fff,1725px 1086px #fff,1343px 1921px #fff,596px 903px #fff,1061px 478px #fff,18px 1409px #fff,729px 1364px #fff,264px 911px #fff,677px 1442px #fff,123px 33px #fff,1303px 646px #fff,1945px 792px #fff,1305px 938px #fff,918px 1536px #fff,620px 948px #fff,183px 646px #fff,695px 687px #fff,881px 272px #fff"
-_STARS_MEDIUM = "1925px 1320px #fff,693px 1778px #fff,1016px 711px #fff,1171px 563px #fff,661px 1919px #fff,1610px 44px #fff,1275px 140px #fff,1208px 1802px #fff,1473px 1587px #fff,11px 1117px #fff,853px 1757px #fff,1149px 937px #fff,1353px 428px #fff,270px 279px #fff,258px 1404px #fff,417px 1188px #fff,286px 561px #fff,393px 1765px #fff,147px 881px #fff,666px 1097px #fff,1425px 1278px #fff,806px 156px #fff,1252px 561px #fff,218px 52px #fff,1371px 1980px #fff,171px 745px #fff,1424px 89px #fff,137px 244px #fff,939px 1922px #fff,137px 1080px #fff,1757px 50px #fff,904px 536px #fff,1938px 1001px #fff,1172px 440px #fff,72px 1475px #fff,102px 121px #fff,804px 1671px #fff,1314px 270px #fff,440px 1341px #fff,1216px 511px #fff,1061px 1523px #fff,97px 274px #fff,704px 1318px #fff,52px 1872px #fff,1962px 296px #fff,111px 289px #fff,1157px 1236px #fff,1347px 1451px #fff,820px 286px #fff,1389px 1169px #fff,644px 841px #fff"
-_STARS_LARGE = "200px 981px #fff,1731px 521px #fff,132px 1039px #fff,1888px 1547px #fff,899px 1226px #fff,1887px 580px #fff,1548px 1092px #fff,1626px 689px #fff,254px 1072px #fff,1684px 1211px #fff,672px 1267px #fff,939px 668px #fff,1969px 645px #fff,1126px 983px #fff,457px 568px #fff,476px 876px #fff,829px 1896px #fff,1364px 1846px #fff,1507px 1120px #fff,936px 1948px #fff,1833px 832px #fff,1424px 285px #fff,1377px 1596px #fff,432px 153px #fff,1348px 1410px #fff,1529px 954px #fff,1102px 387px #fff,264px 297px #fff,811px 977px #fff,1931px 673px #fff,1734px 978px #fff,1772px 1567px #fff,1197px 1400px #fff,764px 282px #fff,1103px 822px #fff,872px 1803px #fff,1057px 1763px #fff,52px 1299px #fff,1312px 1236px #fff,235px 1082px #fff,299px 1086px #fff,1017px 1602px #fff,1950px 626px #fff,1306px 132px #fff,1358px 1618px #fff,1873px 1718px #fff,1447px 940px #fff,1888px 1195px #fff,1704px 1765px #fff,872px 1357px #fff,1555px 1120px #fff,250px 1415px #fff,450px 415px #fff,492px 901px #fff,170px 1641px #fff,56px 1129px #fff,627px 1514px #fff,1221px 500px #fff,324px 1895px #fff,1397px 1775px #fff,1966px 598px #fff,1550px 763px #fff,326px 1605px #fff,261px 969px #fff,890px 281px #fff,736px 544px #fff,589px 1262px #fff,1581px 368px #fff,1900px 1132px #fff,1914px 585px #fff,1864px 1517px #fff,241px 217px #fff,859px 787px #fff,996px 1729px #fff,741px 121px #fff,418px 414px #fff,142px 967px #fff,387px 896px #fff,703px 562px #fff,968px 1136px #fff,1682px 332px #fff,1287px 846px #fff,256px 1427px #fff,1885px 432px #fff,1739px 1458px #fff,345px 1769px #fff,1140px 1612px #fff,192px 1921px #fff,920px 471px #fff,834px 881px #fff,917px 1803px #fff,466px 1266px #fff,483px 1108px #fff,689px 986px #fff,1279px 786px #fff,458px 910px #fff,1250px 870px #fff,785px 1654px #fff,1543px 1757px #fff,287px 1272px #fff"
+try:
+    from star_data import STARS_1, STARS_2, STARS_3, SIDEBAR_LOOP_STARS_1, SIDEBAR_LOOP_STARS_2, SIDEBAR_LOOP_STARS_3
+except ImportError:
+    from app.star_data import STARS_1, STARS_2, STARS_3, SIDEBAR_LOOP_STARS_1, SIDEBAR_LOOP_STARS_2, SIDEBAR_LOOP_STARS_3
 
+# ============================================================
+# STARFIELD (Uiverse.io by amir_6539 - 3 couches cosmiques)
+# ============================================================
 STAR_CSS = f"""
+        /* Fond spatial cosmique Uiverse.io by amir_6539 */
         section[data-testid="stSidebar"] {{
-            position: relative;
-            isolation: isolate;
-            overflow: hidden;
+            position: relative !important;
+            isolation: isolate !important;
+            overflow: hidden !important;
+            background: radial-gradient(ellipse at bottom, #1b2735 0%, #090a0f 100%) !important;
         }}
-        /* Couche 1 : etoiles fines (lointaines) */
+
+        /* Transparence des conteneurs internes pour laisser briller le ciel etoile */
+        section[data-testid="stSidebar"] [data-testid="stSidebarContent"],
+        section[data-testid="stSidebar"] [data-testid="stSidebarUserContent"],
+        section[data-testid="stSidebar"] [data-testid="stVerticalBlock"] {{
+            background: transparent !important;
+        }}
+
+        /* Couche 1 : 1400 etoiles fines lointaines (60s) */
         section[data-testid="stSidebar"]::before {{
-            content: "";
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100vw;
-            height: 100vh;
-            clip-path: inset(0 calc(100vw - 22rem) 0 0);
-            pointer-events: none;
-            z-index: 0;
-            width: 1px;
-            height: 1px;
-            background: transparent;
-            box-shadow: {_STARS_SMALL};
-            opacity: 0.6;
-            animation: starfield-drift-slow 70s linear infinite;
+            content: "" !important;
+            position: absolute !important;
+            top: 0 !important;
+            left: 0 !important;
+            width: 1.5px !important;
+            height: 1.5px !important;
+            background: transparent !important;
+            box-shadow: {SIDEBAR_LOOP_STARS_1} !important;
+            animation: sidebarStarDrift 60s linear infinite !important;
+            pointer-events: none !important;
+            z-index: 1 !important;
         }}
-        /* Couche 2 : etoiles moyennes */
+
+        /* Couche 2 : 400 etoiles moyennes intermediaires (110s) */
         section[data-testid="stSidebar"]::after {{
-            content: "";
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100vw;
-            height: 100vh;
-            clip-path: inset(0 calc(100vw - 22rem) 0 0);
-            pointer-events: none;
-            z-index: 0;
-            width: 2px;
-            height: 2px;
-            background: transparent;
-            box-shadow: {_STARS_MEDIUM};
-            opacity: 0.5;
-            animation: starfield-drift-medium 130s linear infinite;
+            content: "" !important;
+            position: absolute !important;
+            top: 0 !important;
+            left: 0 !important;
+            width: 2.5px !important;
+            height: 2.5px !important;
+            background: transparent !important;
+            box-shadow: {SIDEBAR_LOOP_STARS_2} !important;
+            animation: sidebarStarDrift 110s linear infinite !important;
+            pointer-events: none !important;
+            z-index: 1 !important;
         }}
-        /* Couche 3 : etoiles grosses (proches) */
-        section[data-testid="stSidebar"] .stars-layer {{
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100vw;
-            height: 100vh;
-            clip-path: inset(0 calc(100vw - 22rem) 0 0);
-            pointer-events: none;
-            z-index: 0;
-            width: 3px;
-            height: 3px;
-            background: transparent;
-            box-shadow: {_STARS_LARGE};
-            opacity: 0.35;
-            animation: starfield-drift-fast 180s linear infinite;
+
+        /* Couche 3 : 200 etoiles brillantes proches (160s) */
+        section[data-testid="stSidebar"] [data-testid="stSidebarContent"]::before {{
+            content: "" !important;
+            position: absolute !important;
+            top: 0 !important;
+            left: 0 !important;
+            width: 3.5px !important;
+            height: 3.5px !important;
+            background: transparent !important;
+            box-shadow: {SIDEBAR_LOOP_STARS_3} !important;
+            animation: sidebarStarDrift 160s linear infinite !important;
+            pointer-events: none !important;
+            z-index: 1 !important;
         }}
-        /* Conteneur pour la 3eme couche */
-        .stars-layer-wrapper {{
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            pointer-events: none;
-            z-index: 0;
-            overflow: hidden;
+
+        /* Garantit que tous les textes, boutons et labels restent parfaitement au premier plan */
+        section[data-testid="stSidebar"] h2,
+        section[data-testid="stSidebar"] p,
+        section[data-testid="stSidebar"] span,
+        section[data-testid="stSidebar"] label,
+        section[data-testid="stSidebar"] [data-testid="stMarkdown"],
+        section[data-testid="stSidebar"] .stRadio,
+        section[data-testid="stSidebar"] hr,
+        section[data-testid="stSidebar"] .stAlert {{
+            position: relative !important;
+            z-index: 5 !important;
         }}
-        @keyframes starfield-drift-slow {{
-            from {{ transform: translateY(0); }}
-            to {{ transform: translateY(-2000px); }}
+
+        @keyframes sidebarStarDrift {{
+            from {{
+                transform: translateY(0px);
+            }}
+            to {{
+                transform: translateY(-2000px);
+            }}
         }}
-        @keyframes starfield-drift-medium {{
-            from {{ transform: translateY(0); }}
-            to {{ transform: translateY(-2000px); }}
+
+        @keyframes introFadeUp {{
+            0% {{
+                opacity: 0;
+                transform: translateY(24px);
+            }}
+            100% {{
+                opacity: 1;
+                transform: translateY(0);
+            }}
         }}
-        @keyframes starfield-drift-fast {{
-            from {{ transform: translateY(0); }}
-            to {{ transform: translateY(-2000px); }}
-        }}
+
         @media (prefers-reduced-motion: reduce) {{
             section[data-testid="stSidebar"]::before,
             section[data-testid="stSidebar"]::after,
-            section[data-testid="stSidebar"] .stars-layer {{
-                animation: none;
+            section[data-testid="stSidebar"] [data-testid="stSidebarContent"]::before {{
+                animation: none !important;
             }}
         }}
 """
+
 
 
 def apply_theme(bg_image_b64=None, bg_image_mime="image/jpeg"):
@@ -266,15 +275,22 @@ def apply_theme(bg_image_b64=None, bg_image_mime="image/jpeg"):
             --card-border-hover: rgba(28,43,56,0.09);
             --card-shadow: 0 4px 14px rgba(28,43,56,0.06);
             --card-shadow-hover: 0 22px 42px rgba(28,43,56,0.20);
+            --glass-border: rgba(255, 255, 255, 0.22);
+            --ease-spring: cubic-bezier(0.175, 0.885, 0.32, 1.275);
         }}
 
         html, body, [class*="css"] {{
             font-family: "Inter", -apple-system, BlinkMacSystemFont, sans-serif;
+            overflow-anchor: none !important;
+        }}
+
+        .main, .stApp, [data-testid="stAppViewContainer"] {{
+            overflow-anchor: none !important;
         }}
 
         .main .block-container {{
             max-width: 1320px;
-            padding-top: 1.4rem;
+            padding-top: 1.2rem;
             padding-bottom: 3rem;
         }}
 
@@ -294,10 +310,10 @@ def apply_theme(bg_image_b64=None, bg_image_mime="image/jpeg"):
             letter-spacing: 0.1px;
         }}
 
-        /* ---------- Sidebar (restee sombre : contraste et ancrage) ---------- */
+        /* ---------- Sidebar (fond cosmique Uiverse.io by amir_6539) ---------- */
         section[data-testid="stSidebar"] {{
-            background: linear-gradient(195deg, #16232d 0%, {COLOR_DEEP} 55%, #223546 100%);
-            border-right: 1px solid rgba(255,255,255,0.06);
+            background: radial-gradient(ellipse at bottom, #1b2735 0%, #090a0f 100%) !important;
+            border-right: 1px solid rgba(255,255,255,0.08);
         }}
         section[data-testid="stSidebar"] * {{
             color: #eef3f5 !important;
@@ -324,6 +340,129 @@ def apply_theme(bg_image_b64=None, bg_image_mime="image/jpeg"):
 
         /* ---------- Starfield (V3.3 - 3 couches) ---------- */
         {STAR_CSS}
+
+        /* ---------- Menu Glassmorphic Flottant (Uiverse.io by mymiamo) ---------- */
+        div[data-testid="stElementContainer"]:has(.menu-nav-wrapper) {{
+            position: sticky !important;
+            top: 10px !important;
+            z-index: 999999 !important;
+            width: 100% !important;
+            display: flex !important;
+            justify-content: center !important;
+            pointer-events: none !important;
+            margin-bottom: 0.6rem !important;
+        }}
+
+        .menu-nav-wrapper {{
+            position: relative !important;
+            width: 100% !important;
+            display: flex !important;
+            justify-content: center !important;
+            pointer-events: none !important;
+        }}
+
+        .menu {{
+            position: relative;
+            width: calc(100% - 20px);
+            max-width: 540px;
+            backdrop-filter: blur(16px) saturate(180%) contrast(150%);
+            -webkit-backdrop-filter: blur(16px) saturate(180%) contrast(150%);
+            background: rgba(16, 52, 92, 0.52);
+            border: 1px solid var(--glass-border);
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.16), 0 0 25px rgba(0, 122, 255, 0.22);
+            padding: 7px 10px;
+            border-radius: 99rem;
+            display: flex;
+            justify-content: center;
+            gap: 8px;
+            pointer-events: auto;
+            transition: box-shadow 0.3s ease, border-color 0.3s ease, transform 0.2s ease;
+        }}
+
+        .menu:hover {{
+            box-shadow: 0 14px 38px rgba(0, 0, 0, 0.22), 0 0 35px rgba(0, 122, 255, 0.32);
+            border-color: rgba(255, 255, 255, 0.38);
+        }}
+
+        .menu::after {{
+            content: "";
+            position: absolute;
+            inset: 0;
+            border-radius: inherit;
+            box-shadow:
+                inset 2px 2px 5px -2px rgba(255, 255, 255, 0.45),
+                inset -2px -2px 5px 2px rgba(255, 255, 255, 0.3),
+                inset 0 -2px 0 rgba(255, 255, 255, 0.2);
+            pointer-events: none;
+            z-index: -1;
+        }}
+
+        .menu a {{
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            flex: 1 1 0;
+            min-width: 0;
+            color: rgba(255, 255, 255, 0.92);
+            text-decoration: none !important;
+            padding: 9px 8px;
+            border-radius: 999rem;
+            -webkit-tap-highlight-color: transparent;
+            transition:
+                background 0.18s var(--ease-spring),
+                color 0.18s var(--ease-spring),
+                transform 0.18s var(--ease-spring),
+                box-shadow 0.3s ease-in-out;
+            cursor: pointer;
+            user-select: none;
+        }}
+
+        .menu a:hover {{
+            background-color: rgba(255, 255, 255, 0.32);
+            box-shadow:
+                inset 2px 2px 5px -2px rgba(255, 255, 255, 0.5),
+                inset -2px -1px 5px 0 rgba(255, 255, 255, 0.4),
+                inset 0 -2px 0 rgba(255, 255, 255, 0.25),
+                0 4px 12px rgba(0, 0, 0, 0.12);
+            transform: rotate(2.2deg) scale(1.02);
+            color: #ffffff;
+        }}
+
+        .menu a svg {{
+            width: 1.35rem;
+            height: 1.35rem;
+            font-size: 1.35rem;
+            stroke: currentColor;
+            transition: transform 0.2s ease;
+        }}
+
+        .menu a:hover svg {{
+            transform: scale(1.1);
+        }}
+
+        .menu a span {{
+            font-size: 0.82rem;
+            font-weight: 600;
+            line-height: 1;
+            margin-top: 5px;
+            letter-spacing: 0.2px;
+        }}
+
+        .menu a.active {{
+            background: rgba(248, 250, 253, 0.95);
+            color: #0066d6 !important;
+            box-shadow: 0 4px 16px rgba(0, 50, 130, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.9);
+            font-weight: 700;
+        }}
+
+        .menu a.active svg {{
+            stroke: #0066d6;
+        }}
+
+        .menu a:active {{
+            transform: scale(0.96);
+        }}
+
 
         /* ---------- Langage commun "carte editoriale" ---------- */
         .feature-card, .kpi-card, .status-chip,
@@ -757,15 +896,6 @@ def apply_theme(bg_image_b64=None, bg_image_mime="image/jpeg"):
         unsafe_allow_html=True,
     )
 
-    # Element HTML pour la 3eme couche d'etoiles (starfield)
-    st.markdown(
-        """
-        <div class="stars-layer-wrapper">
-            <div class="stars-layer"></div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
 
 
 def hero_banner(title, subtitle, tag=None, background_image_b64=None, image_mime="image/jpeg"):
@@ -842,5 +972,75 @@ def alert_ticker(items):
     )
     st.markdown(
         f'<div class="ticker-wrap"><div class="ticker-track">{contenu}{contenu}</div></div>',
+        unsafe_allow_html=True,
+    )
+
+
+def render_floating_nav(active_page: str):
+    """Affiche la barre de navigation flottante glassmorphic (Uiverse.io by mymiamo)."""
+    is_dash = (active_page == "Tableau de bord")
+    is_chat = (active_page == "Assistant")
+
+    active_dash = "active" if is_dash else ""
+    active_chat = "active" if is_chat else ""
+
+    icon_dashboard = (
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
+        '<rect x="3" y="3" width="7" height="9" rx="1"></rect>'
+        '<rect x="14" y="3" width="7" height="5" rx="1"></rect>'
+        '<rect x="14" y="12" width="7" height="9" rx="1"></rect>'
+        '<rect x="3" y="16" width="7" height="5" rx="1"></rect>'
+        '</svg>'
+    )
+    icon_assistant = (
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
+        '<path d="M12 2a3 3 0 0 0-3 3v1a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"></path>'
+        '<path d="M19 11v2a7 7 0 0 1-14 0v-2"></path>'
+        '<circle cx="9" cy="9" r="1"></circle>'
+        '<circle cx="15" cy="9" r="1"></circle>'
+        '<path d="M12 18v4"></path>'
+        '<path d="M8 22h8"></path>'
+        '</svg>'
+    )
+    icon_refresh = (
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
+        '<path d="M21.5 2v6h-6"></path>'
+        '<path d="M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"></path>'
+        '</svg>'
+    )
+
+    current_query = "dashboard" if is_dash else "assistant"
+
+    html = f"""
+    <div class="menu-nav-wrapper">
+        <nav class="menu" id="uiverse-menu">
+            <a href="/?page=dashboard" target="_self" class="{active_dash}" title="Tableau de bord national">
+                {icon_dashboard}
+                <span>Tableau de bord</span>
+            </a>
+            <a href="/?page=assistant" target="_self" class="{active_chat}" title="Assistant IA Hydrologique">
+                {icon_assistant}
+                <span>Assistant IA</span>
+            </a>
+            <a href="/?page={current_query}&refresh=1" target="_self" title="Synchroniser et rafraîchir les données">
+                {icon_refresh}
+                <span>Actualiser</span>
+            </a>
+        </nav>
+    </div>
+    """
+    st.markdown(html, unsafe_allow_html=True)
+
+
+def render_sidebar_stars():
+    """Injecte le ciel etoile cosmique (Uiverse.io by amir_6539) directement dans la barre laterale."""
+    st.markdown(
+        """
+        <div class="sidebar-stars-portal">
+            <div class="sidebar-stars-1"></div>
+            <div class="sidebar-stars-2"></div>
+            <div class="sidebar-stars-3"></div>
+        </div>
+        """,
         unsafe_allow_html=True,
     )

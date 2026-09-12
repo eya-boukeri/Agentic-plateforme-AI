@@ -30,7 +30,11 @@ load_dotenv()
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from agents.agent_orchestrator import AgentOrchestrator
-from theme import apply_theme, hero_banner, section_title, kpi_card, feature_cards, COLOR_TEAL, COLOR_TERRACOTTA, COLOR_MUTED, icon_svg
+from theme import (
+    apply_theme, hero_banner, section_title, kpi_card, feature_cards,
+    COLOR_TEAL, COLOR_TERRACOTTA, COLOR_MUTED, icon_svg,
+    render_floating_nav, render_sidebar_stars,
+)
 from utils.upload_importer import build_default_report
 
 RACINE_PROJET = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -555,7 +559,25 @@ def render_chat():
 PAGE_DASHBOARD = "Tableau de bord"
 PAGE_ASSISTANT = "Assistant"
 
+# Synchronisation bidirectionnelle fluide avec query_params (menu flottant et liens)
+query_page = st.query_params.get("page", None)
+if query_page:
+    if query_page.lower() == "assistant":
+        st.session_state["selected_page"] = PAGE_ASSISTANT
+    elif query_page.lower() == "dashboard":
+        st.session_state["selected_page"] = PAGE_DASHBOARD
+
+if "selected_page" not in st.session_state:
+    st.session_state["selected_page"] = PAGE_DASHBOARD
+
+# Action de synchronisation / rafraîchissement depuis le menu flottant
+if st.query_params.get("refresh") == "1":
+    st.cache_data.clear()
+    st.query_params.pop("refresh", None)
+    st.toast("Données hydrométriques synchronisées avec la base !", icon="🌊")
+
 with st.sidebar:
+    render_sidebar_stars()
     st.markdown("## DGRE — Tunisie")
     st.caption("Plateforme Agentic AI · Ressources en eau")
     st.markdown("---")
@@ -566,10 +588,19 @@ with st.sidebar:
         st.caption(f"DB: {health['db']['state_label']} · LLM: {health['llm']['state_label']} · Modèle: {health['model']['state_label']}")
     except Exception:
         st.warning("Impossible de calculer l'état de la plateforme")
+
+    current_idx = 0 if st.session_state["selected_page"] == PAGE_DASHBOARD else 1
     page = st.radio(
         "Navigation", [PAGE_DASHBOARD, PAGE_ASSISTANT],
+        index=current_idx,
+        key="sidebar_nav_radio",
         label_visibility="collapsed",
     )
+    if page != st.session_state["selected_page"]:
+        st.session_state["selected_page"] = page
+        st.query_params["page"] = "dashboard" if page == PAGE_DASHBOARD else "assistant"
+        st.rerun()
+
     st.markdown("---")
     st.caption(
         "Cette plateforme génère automatiquement l'annuaire hydrométrique "
@@ -579,8 +610,12 @@ with st.sidebar:
     st.markdown("---")
     st.caption("République Tunisienne · Direction Générale des Ressources en Eau")
 
-if page == PAGE_DASHBOARD:
-    render_dashboard()
+current_page = st.session_state["selected_page"]
 
+# Affichage du menu pilule glassmorphic flottant (Uiverse.io by mymiamo)
+render_floating_nav(current_page)
+
+if current_page == PAGE_DASHBOARD:
+    render_dashboard()
 else:
     render_chat()
