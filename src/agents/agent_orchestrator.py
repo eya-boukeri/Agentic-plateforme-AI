@@ -27,55 +27,70 @@ import ast
 # ----------------------------------------------------------------------
 OUTILS_DISPONIBLES = [
     {
-        "name": "generer_annuaire",
-        "description": "Genere l'annuaire hydrometrique PDF complet pour une annee donnee.",
-        "parameters": {
-            "type": "object",
-            "properties": {"annee": {"type": "integer"}},
-            "required": ["annee"]
+        "type": "function",
+        "function": {
+            "name": "generer_annuaire",
+            "description": "Genere l'annuaire hydrometrique PDF complet pour une annee donnee.",
+            "parameters": {
+                "type": "object",
+                "properties": {"annee": {"type": "integer"}},
+                "required": ["annee"]
+            }
         }
     },
     {
-        "name": "generer_pdf_periode",
-        "description": "Genere un PDF partiel de l'annuaire pour une periode de quelques mois.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "annee": {"type": "integer"},
-                "mois_debut": {"type": "integer"},
-                "mois_fin": {"type": "integer"}
-            },
-            "required": ["annee", "mois_debut", "mois_fin"]
+        "type": "function",
+        "function": {
+            "name": "generer_pdf_periode",
+            "description": "Genere un PDF partiel de l'annuaire pour une periode de quelques mois.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "annee": {"type": "integer"},
+                    "mois_debut": {"type": "integer"},
+                    "mois_fin": {"type": "integer"}
+                },
+                "required": ["annee", "mois_debut", "mois_fin"]
+            }
         }
     },
     {
-        "name": "generer_carte_hydrometrique",
-        "description": "Genere une carte du reseau hydrometrique pour un gouvernorat ou la Tunisie.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "zone": {"type": "string"},
-                "nb_mois_precedents": {"type": "integer"}
-            },
-            "required": ["zone"]
+        "type": "function",
+        "function": {
+            "name": "generer_carte_hydrometrique",
+            "description": "Genere une carte du reseau hydrometrique pour un gouvernorat ou la Tunisie.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "zone": {"type": "string"},
+                    "nb_mois_precedents": {"type": "integer"}
+                },
+                "required": ["zone"]
+            }
         }
     },
     {
-        "name": "recalculer_statistiques",
-        "description": "Recalcule les debits journaliers, statistiques annuelles et crues pour une annee.",
-        "parameters": {
-            "type": "object",
-            "properties": {"annee": {"type": "integer"}},
-            "required": ["annee"]
+        "type": "function",
+        "function": {
+            "name": "recalculer_statistiques",
+            "description": "Recalcule les debits journaliers, statistiques annuelles et crues pour une annee.",
+            "parameters": {
+                "type": "object",
+                "properties": {"annee": {"type": "integer"}},
+                "required": ["annee"]
+            }
         }
     },
     {
-        "name": "repondre_question_donnees",
-        "description": "Repond a une question factuelle sur les donnees hydrometriques.",
-        "parameters": {
-            "type": "object",
-            "properties": {"question": {"type": "string"}},
-            "required": ["question"]
+        "type": "function",
+        "function": {
+            "name": "repondre_question_donnees",
+            "description": "Repond a une question factuelle sur les donnees hydrometriques.",
+            "parameters": {
+                "type": "object",
+                "properties": {"question": {"type": "string"}},
+                "required": ["question"]
+            }
         }
     },
 ]
@@ -113,7 +128,13 @@ def extraire_appel_outil(reponse_modele):
         bloc = match.group(0)
 
     try:
-        return json.loads(bloc)
+        res = json.loads(bloc)
+        if isinstance(res, dict) and isinstance(res.get("arguments"), str):
+            try:
+                res["arguments"] = json.loads(res["arguments"])
+            except Exception:
+                pass
+        return res
     except json.JSONDecodeError:
         return None
 
@@ -302,8 +323,19 @@ class AgentOrchestrator:
             }
         
         # === INTENTION DE QUESTION ===
-        question_keywords = ['quel', 'quelle', 'quels', 'quelles', 'combien', 'comment', 'pourquoi', 'est-ce que']
-        if any(kw in input_lower for kw in question_keywords) or '?' in input_lower:
+        question_keywords = [
+            'quel', 'quelle', 'quels', 'quelles', 'combien', 'comment', 'pourquoi', 'est-ce que',
+            'donne', 'donne-moi', 'donne moi', 'montre', 'montre-moi', 'affiche', 'liste', 'trouve'
+        ]
+        if any(kw in input_lower for kw in question_keywords) or '?' in input_lower or any(kw in input_lower for kw in ['crue', 'crues', 'crus', 'inondation', 'débit', 'debit', 'volume']):
+            if any(kw in input_lower for kw in ['crue', 'crues', 'crus', 'inondation', 'inondations', 'pic']):
+                return {
+                    'type': 'question',
+                    'subtype': 'crues',
+                    'params': {},
+                    'message': "Recherche des informations sur les crues"
+                }
+
             if 'max' in input_lower or 'maximum' in input_lower or 'plus grand' in input_lower:
                 if 'débit' in input_lower or 'debit' in input_lower:
                     return {
@@ -322,20 +354,12 @@ class AgentOrchestrator:
                         'message': "Calcul du débit moyen"
                     }
             
-            if 'volume' in input_lower:
+            if 'volume' in input_lower or 'hm3' in input_lower:
                 return {
                     'type': 'question',
                     'subtype': 'total_volume',
                     'params': {},
                     'message': "Recherche du volume total"
-                }
-            
-            if 'crue' in input_lower or 'crues' in input_lower:
-                return {
-                    'type': 'question',
-                    'subtype': 'crues',
-                    'params': {},
-                    'message': "Recherche des informations sur les crues"
                 }
             
             if 'station' in input_lower:
@@ -378,19 +402,27 @@ class AgentOrchestrator:
     def execute(self, user_input):
         """
         Point d'entrée principal - Exécute l'intention détectée.
-        Essaie d'abord le LLM fine-tune (comprend les formulations
-        naturelles, choisit l'outil ET ses arguments) ; se rabat sur la
-        détection par mots-clés si le LLM est indisponible.
+        1. Détecte d'abord les questions hydrométriques explicites (crues, débits, stations)
+           pour une réponse déterministe immédiate sans latence.
+        2. Tente le LLM fine-tune pour les requêtes complexes, actions et graphiques libres.
+        3. Se rabat sur les mots-clés généraux si nécessaire.
         """
         print(f"\n🔍 Analyse de la requête: {user_input}")
 
+        # 1. Vérification directe : questions de données précises (crues, débits, volume, stations)
+        intent_rapide = self.detect_intent(user_input)
+        if intent_rapide['type'] == 'question' and intent_rapide.get('subtype') in ('crues', 'max_debit', 'avg_debit', 'total_volume', 'station'):
+            print(f"🎯 Intention hydrométrique directe : {intent_rapide['subtype']}")
+            return self._handle_question(intent_rapide, user_input)
+
+        # 2. Utilisation du modèle LLM fine-tune pour intentions complexes, actions ou graphiques
         intent_llm = self.detect_intent_llm(user_input)
         if intent_llm:
             print(f"🎯 Intention (LLM): {intent_llm['type']} - {intent_llm['subtype']}")
-            return self._executer_intention_llm(intent_llm)
+            return self._executer_intention_llm(intent_llm, user_input=user_input)
 
         print("ℹ️ LLM indisponible ou reponse non exploitable - repli sur les mots-cles")
-        intent = self.detect_intent(user_input)
+        intent = intent_rapide
         print(f"🎯 Intention (mots-cles): {intent['type']} - {intent['subtype']}")
         
         if intent['type'] == 'generation':
@@ -406,22 +438,32 @@ class AgentOrchestrator:
         else:
             return self._handle_default()
 
-    def _executer_intention_llm(self, intent_llm):
+    def _executer_intention_llm(self, intent_llm, user_input=None):
         """Route une intention detectee par le LLM fine-tune vers le bon gestionnaire."""
         if intent_llm['type'] == 'outil':
             nom_outil = intent_llm['subtype']
             params = intent_llm['params']
 
-            if nom_outil == 'generer_annuaire':
-                return self._handle_generation({'params': {'annee': params.get('annee', 2019)}})
-            elif nom_outil == 'generer_pdf_periode':
-                return self._handle_pdf_periode(params)
+            if nom_outil in ('generer_annuaire', 'generer_pdf_periode'):
+                # Garde-fou anti-hallucination : si l'utilisateur demande des données de crues/débits sans demander explicitement un PDF
+                input_l = (user_input or '').lower()
+                demande_pdf = any(kw in input_l for kw in ['pdf', 'annuaire', 'document', 'rapport', 'télécharge', 'telecharge', 'exporter', 'export'])
+                demande_donnees = any(kw in input_l for kw in ['crue', 'crues', 'crus', 'inondation', 'débit', 'debit', 'volume', 'station'])
+                if demande_donnees and not demande_pdf:
+                    print("⚠️ Le LLM a proposé un outil PDF pour une question factuelle de données - redirection vers AgentRAG")
+                    return self._handle_question({'subtype': 'general', 'params': {}}, user_input)
+
+                if nom_outil == 'generer_annuaire':
+                    return self._handle_generation({'params': {'annee': params.get('annee', 2019)}})
+                else:
+                    return self._handle_pdf_periode(params)
+
             elif nom_outil == 'generer_carte_hydrometrique':
                 return self._handle_carte_hydrometrique(params)
             elif nom_outil == 'recalculer_statistiques':
                 return self._handle_recalcul_statistiques(params)
             elif nom_outil == 'repondre_question_donnees':
-                return self._handle_question({'subtype': 'general', 'params': {}}, params.get('question', ''))
+                return self._handle_question({'subtype': 'general', 'params': {}}, params.get('question', user_input or ''))
             else:
                 return {'status': 'error', 'type': 'outil_inconnu',
                         'message': f"❌ Outil '{nom_outil}' detecte par le LLM mais non implemente cote serveur."}
@@ -430,6 +472,23 @@ class AgentOrchestrator:
             return self._handle_graphique_personnalise(intent_llm['params']['code'])
 
         elif intent_llm['type'] == 'texte_direct':
+            # Sécurité anti-hallucination : si la requête utilisateur concerne une action
+            # ou des données de la base, on ne renvoie JAMAIS de texte inventé par le modèle,
+            # on exécute l'agent métier avec les vraies données PostgreSQL / SIG.
+            if user_input:
+                repli = self.detect_intent(user_input)
+                if repli['type'] in ('generation', 'carte', 'recalcul'):
+                    print("⚠️ Le LLM a répondu en texte au lieu d'appeler l'action - redirection vers l'agent dédié pour éviter l'hallucination")
+                    if repli['type'] == 'generation':
+                        return self._handle_generation(repli)
+                    elif repli['type'] == 'carte':
+                        return self._handle_carte_hydrometrique(repli['params'])
+                    elif repli['type'] == 'recalcul':
+                        return self._handle_recalcul_statistiques(repli['params'])
+                elif repli['type'] == 'question' and repli.get('subtype') != 'general':
+                    print("⚠️ Le LLM a répondu en texte direct - routage vers AgentRAG (données réelles SQL) pour éviter l'hallucination")
+                    return self._handle_question(repli, user_input)
+
             return {'status': 'success', 'type': 'question', 'subtype': 'llm_direct',
                     'message': intent_llm['params']['reponse'], 'answer': intent_llm['params']['reponse']}
 

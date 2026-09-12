@@ -36,6 +36,10 @@ class AgentLLM:
         # ⚠️ CORRECTION : "mistral" → "hydrometrie"
         self.model = model or os.getenv("LLM_MODEL", "hydrometrie")
         self.host = host or os.getenv("LLM_HOST", "http://localhost:11434")
+        try:
+            self.timeout = int(os.getenv("LLM_TIMEOUT", "180"))
+        except (ValueError, TypeError):
+            self.timeout = 180
         self.api_url = f"{self.host}/api/generate"
         self.chat_url = f"{self.host}/api/chat"
         self.available = False
@@ -48,36 +52,52 @@ class AgentLLM:
         self._check_availability()
     
     def _check_availability(self):
-        """Vérifie si Ollama est disponible"""
+        """Vérifie si Ollama est disponible (avec détection automatique Docker -> hôte)"""
         self.last_check = datetime.utcnow().isoformat() + "Z"
-        try:
-            response = requests.get(f"{self.host}/api/tags", timeout=5)
-            if response.status_code == 200:
-                models = response.json().get('models', [])
-                model_names = [m.get('name', '') for m in models]
-                self.available_models = model_names
-                
-                # Vérifier si le modèle demandé est disponible
-                if any(self.model in name for name in model_names):
-                    self.available = True
-                    self.model_loaded = True
-                    self.status_message = f"Modèle {self.model} chargé"
-                    print(f"✅ LLM disponible : {self.model}")
+
+        # Si localhost échoue (courant sous Docker), tenter host.docker.internal
+        hosts_a_tester = [self.host]
+        if "localhost" in self.host or "127.0.0.1" in self.host:
+            hosts_a_tester.append("http://host.docker.internal:11434")
+        elif "host.docker.internal" in self.host:
+            hosts_a_tester.append("http://localhost:11434")
+
+        derniere_erreur = None
+        for h in hosts_a_tester:
+            try:
+                response = requests.get(f"{h}/api/tags", timeout=5)
+                if response.status_code == 200:
+                    # Mettre à jour l'hôte effectif joignable
+                    self.host = h
+                    self.api_url = f"{self.host}/api/generate"
+                    self.chat_url = f"{self.host}/api/chat"
+
+                    models = response.json().get('models', [])
+                    model_names = [m.get('name', '') for m in models]
+                    self.available_models = model_names
+
+                    # Vérifier si le modèle demandé est disponible
+                    if any(self.model in name for name in model_names):
+                        self.available = True
+                        self.model_loaded = True
+                        self.status_message = f"Modèle {self.model} chargé"
+                        print(f"✅ LLM disponible : {self.model} (sur {self.host})")
+                    else:
+                        self.available = True
+                        self.model_loaded = False
+                        self.status_message = f"Modèle {self.model} absent"
+                        print(f"⚠️ Modèle {self.model} non trouvé sur {self.host}.")
+                        print(f"   Modèles disponibles : {', '.join(model_names)}")
+                    return
                 else:
-                    self.available = True
-                    self.model_loaded = False
-                    self.status_message = f"Modèle {self.model} absent"
-                    print(f"⚠️ Modèle {self.model} non trouvé.")
-                    print(f"   Modèles disponibles : {', '.join(model_names)}")
-                    print(f"   Installez-le avec : ollama pull {self.model}")
-            else:
-                self.available = False
-                self.status_message = f"Ollama a renvoyé {response.status_code}"
-                print("⚠️ Ollama n'est pas disponible. Vérifiez qu'il est lancé (ollama serve)")
-        except Exception as e:
-            self.available = False
-            self.status_message = f"Erreur de connexion: {e}"
-            print(f"⚠️ Erreur de connexion à Ollama : {e}")
+                    derniere_erreur = f"Ollama a renvoyé {response.status_code}"
+            except Exception as e:
+                derniere_erreur = f"Erreur de connexion: {e}"
+
+        self.available = False
+        self.model_loaded = False
+        self.status_message = derniere_erreur or "Ollama injoignable"
+        print(f"⚠️ Erreur de connexion à Ollama : {self.status_message}")
 
     def get_status(self):
         """Retourne un état simple de disponibilité pour l'UI."""
@@ -129,7 +149,7 @@ class AgentLLM:
             response = requests.post(
                 self.api_url,
                 json=payload,
-                timeout=180  # inférence CPU sans GPU peut être lente, surtout au 1er appel
+                timeout=self.timeout
             )
             
             if response.status_code == 200:
@@ -159,7 +179,8 @@ class AgentLLM:
             max_tokens: Nombre max de tokens
             tools: Liste optionnelle de definitions d'outils (meme format
                    que celui utilise pour le fine-tuning : name/description/
-                   parameters). Transmis tel quel a l'API /api/chat d'Ollama.
+                   parameters). Normalisé automatiquement vers le format
+                   type=function attendu par l'API /api/chat d'Ollama.
 
         Returns:
             str: Réponse générée (texte brut - peut contenir un appel
@@ -181,12 +202,25 @@ class AgentLLM:
                 }
             }
             if tools:
-                payload["tools"] = tools
+                # Normaliser les outils au format fonction standardisé attendu par Ollama /api/chat
+                formatted_tools = []
+                for tool in tools:
+                    if isinstance(tool, dict):
+                        if tool.get("type") == "function" and "function" in tool:
+                            formatted_tools.append(tool)
+                        elif "name" in tool:
+                            formatted_tools.append({
+                                "type": "function",
+                                "function": tool
+                            })
+                        else:
+                            formatted_tools.append(tool)
+                payload["tools"] = formatted_tools
             
             response = requests.post(
                 self.chat_url,
                 json=payload,
-                timeout=180
+                timeout=self.timeout
             )
             
             if response.status_code == 200:
@@ -201,16 +235,25 @@ class AgentLLM:
                 # fine-tune, qui produit deja le JSON dans le texte).
                 if message.get('tool_calls'):
                     appel = message['tool_calls'][0].get('function', {})
+                    args = appel.get("arguments", {})
+                    if isinstance(args, str):
+                        try:
+                            args = json.loads(args)
+                        except Exception:
+                            pass
                     return (
                         "<tool_call>\n"
-                        + json.dumps({"name": appel.get("name"), "arguments": appel.get("arguments", {})}, ensure_ascii=False)
+                        + json.dumps({"name": appel.get("name"), "arguments": args}, ensure_ascii=False)
                         + "\n</tool_call>"
                     )
                 return message.get('content', '').strip()
             else:
-                print(f"❌ Erreur LLM chat: {response.status_code}")
+                print(f"❌ Erreur LLM chat: {response.status_code} - {response.text}")
                 return None
                 
+        except requests.exceptions.Timeout:
+            print(f"❌ Erreur LLM chat: Timeout dépassé ({self.timeout}s)")
+            return None
         except Exception as e:
             print(f"❌ Erreur LLM chat: {e}")
             return None

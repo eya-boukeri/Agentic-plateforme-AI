@@ -1,20 +1,30 @@
 # test_llm.py
+import os
 import requests
+from dotenv import load_dotenv
+
+load_dotenv()
 
 def test_ollama():
     try:
-        # Vérifier que le serveur répond
-        response = requests.get("http://localhost:11434/api/tags")
-        print("✅ Serveur Ollama OK")
-        print(f"📦 Modèles disponibles : {response.json()}")
+        host = os.getenv("LLM_HOST", "http://localhost:11434")
+        model = os.getenv("LLM_MODEL", "hydrometrie")
         
-        # Tester un modèle
+        # Vérifier que le serveur répond
+        response = requests.get(f"{host}/api/tags", timeout=5)
+        print("✅ Serveur Ollama OK")
+        models = [m.get("name") for m in response.json().get("models", [])]
+        print(f"📦 Modèles disponibles : {models}")
+        
+        # Tester le modèle hydrometrie
+        print(f"🤖 Test du modèle '{model}'...")
         payload = {
-            "model": "mistral",
-            "prompt": "Dis bonjour en français",
-            "stream": False
+            "model": model,
+            "prompt": "Dis bonjour en tant qu'assistant de la DGRE en une phrase courte.",
+            "stream": False,
+            "options": {"num_predict": 50}
         }
-        response = requests.post("http://localhost:11434/api/generate", json=payload)
+        response = requests.post(f"{host}/api/generate", json=payload, timeout=180)
         print(f"🤖 Réponse : {response.json().get('response')}")
         
     except Exception as e:

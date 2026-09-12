@@ -11,7 +11,7 @@ if hasattr(sys.stdout, 'reconfigure'):
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.engine import URL
 import pandas as pd
 import re
@@ -227,7 +227,8 @@ class AgentRAG:
                 WHERE table_schema = 'public'
                 ORDER BY table_name, ordinal_position
             """
-            df = pd.read_sql(query, self.engine)
+            with self.engine.connect() as conn:
+                df = pd.read_sql(text(query), conn)
             self._schema_info = df
             return df
         except Exception as e:
@@ -247,7 +248,8 @@ class AgentRAG:
                 AND table_type = 'BASE TABLE'
                 ORDER BY table_name
             """
-            tables_df = pd.read_sql(tables_query, self.engine)
+            with self.engine.connect() as conn:
+                tables_df = pd.read_sql(text(tables_query), conn)
             
             info = {}
             for table in tables_df['table_name']:
@@ -258,7 +260,8 @@ class AgentRAG:
                     AND table_schema = 'public'
                     ORDER BY ordinal_position
                 """
-                cols_df = pd.read_sql(cols_query, self.engine)
+                with self.engine.connect() as conn:
+                    cols_df = pd.read_sql(text(cols_query), conn)
                 info[table] = {
                     'columns': cols_df.to_dict('records'),
                     'sample': self._get_sample_data(table, 2)
@@ -274,7 +277,8 @@ class AgentRAG:
         """Récupère un échantillon des données d'une table"""
         try:
             query = f'SELECT * FROM "{table_name}" LIMIT {limit}'
-            df = pd.read_sql(query, self.engine)
+            with self.engine.connect() as conn:
+                df = pd.read_sql(text(query), conn)
             return df.to_dict('records') if not df.empty else []
         except:
             return []
@@ -330,12 +334,20 @@ class AgentRAG:
         if cache_key in self._cache:
             return self._cache[cache_key]
 
-        if params:
-            df = pd.read_sql(query, self.engine, params=params)
-        else:
-            df = pd.read_sql(query, self.engine)
+        with self.engine.connect() as conn:
+            if params:
+                if isinstance(params, (list, tuple)):
+                    cursor_res = conn.exec_driver_sql(query, tuple(params))
+                elif isinstance(params, dict):
+                    cursor_res = conn.execute(text(query), params)
+                else:
+                    cursor_res = conn.exec_driver_sql(query, (params,))
+            else:
+                cursor_res = conn.exec_driver_sql(query)
 
-        result = df.to_dict('records') if not df.empty else []
+            rows = cursor_res.mappings().all()
+            result = [dict(r) for r in rows]
+
         self._cache[cache_key] = result
         return result
 
@@ -499,66 +511,140 @@ Requête SQL :
 
         return True
 
-    def _understand_with_keywords(self, question):
-        """Comprend la question avec des mots-clés (fallback)"""
-        q = question.lower()
+    def _extraire_entites(self, question):
+        """Extrait l'année et le gouvernorat d'une question en langage naturel."""
+        q = question.lower().replace('é', 'e').replace('è', 'e').replace('ê', 'e')
         
+        # 1. Année (ex: 2024, 2019)
+        year_match = re.search(r'\b(19\d{2}|20\d{2})\b', q)
+        annee = int(year_match.group(1)) if year_match else None
+        
+        # 2. Gouvernorats tunisiens (avec gestion des variantes)
+        GOUVS = [
+            'ariana', 'beja', 'ben arous', 'bizerte', 'gabes', 'gafsa',
+            'jendouba', 'kairouan', 'kasserine', 'kebili', 'le kef', 'kef',
+            'mahdia', 'manouba', 'la manouba', 'medenine', 'monastir', 'nabeul',
+            'sfax', 'sidi bouzid', 'siliana', 'sousse', 'tataouine', 'tozeur',
+            'tunis', 'zaghouan'
+        ]
+        gouvernorat = None
+        for g in GOUVS:
+            if re.search(rf'\b{g}\b', q):
+                if g in ('le kef', 'kef'):
+                    gouvernorat = 'KEF'
+                elif g in ('la manouba', 'manouba'):
+                    gouvernorat = 'MANOUBA'
+                else:
+                    gouvernorat = g.upper()
+                break
+                
+        return annee, gouvernorat
+
+    def _understand_with_keywords(self, question, fallback_default=True):
+        """Comprend la question avec extraction d'entités (gouvernorat, année) et mots-clés"""
+        q = question.lower()
+        annee, gouvernorat = self._extraire_entites(question)
+        
+        # --- CRUES (avec fautes d'orthographe courantes : crus, crue, crues, inondation...) ---
+        if any(w in q for w in ['crue', 'crues', 'crus', 'cru', 'inondation', 'inondations', 'pic']):
+            where_clauses = ["1=1"]
+            if gouvernorat:
+                where_clauses.append(f"UPPER(s.gouvernorat) LIKE '%{gouvernorat}%'")
+            if annee:
+                where_clauses.append(f"c.annee = {annee}")
+            return f"""
+                SELECT s.nom as station, s.gouvernorat, c.annee, c.debit_max_m3s, c.date_debut
+                FROM crues c
+                JOIN station s ON c.code_station = s.code_station
+                WHERE {" AND ".join(where_clauses)}
+                ORDER BY c.debit_max_m3s DESC
+                LIMIT 10
+            """
+            
+        # --- DÉBITS ET VOLUMES ---
+        if any(w in q for w in ['débit', 'debit', 'volume', 'hm3', 'm3/s', 'ecoulement', 'écoulement', 'maximal', 'moyen']):
+            if "volume" in q or "hm3" in q:
+                where_clauses = ["st.volume_total_hm3::text <> 'NaN'"]
+                if gouvernorat:
+                    where_clauses.append(f"UPPER(s.gouvernorat) LIKE '%{gouvernorat}%'")
+                if annee:
+                    where_clauses.append(f"st.annee = {annee}")
+                return f"""
+                    SELECT s.nom as station, s.gouvernorat, st.annee, st.volume_total_hm3
+                    FROM statistiques_annuelles st
+                    JOIN station s ON st.code_station = s.code_station
+                    WHERE {" AND ".join(where_clauses)}
+                    ORDER BY st.volume_total_hm3 DESC
+                    LIMIT 10
+                """
+            elif "moyen" in q or "moyenne" in q:
+                where_clauses = ["st.debit_moyen::text <> 'NaN'"]
+                if gouvernorat:
+                    where_clauses.append(f"UPPER(s.gouvernorat) LIKE '%{gouvernorat}%'")
+                if annee:
+                    where_clauses.append(f"st.annee = {annee}")
+                return f"""
+                    SELECT s.nom as station, s.gouvernorat, st.annee, st.debit_moyen
+                    FROM statistiques_annuelles st
+                    JOIN station s ON st.code_station = s.code_station
+                    WHERE {" AND ".join(where_clauses)}
+                    ORDER BY st.debit_moyen DESC
+                    LIMIT 10
+                """
+            else:
+                where_clauses = ["st.debit_max_jour::text <> 'NaN'"]
+                if gouvernorat:
+                    where_clauses.append(f"UPPER(s.gouvernorat) LIKE '%{gouvernorat}%'")
+                if annee:
+                    where_clauses.append(f"st.annee = {annee}")
+                return f"""
+                    SELECT s.nom as station, s.gouvernorat, st.annee, st.debit_max_jour
+                    FROM statistiques_annuelles st
+                    JOIN station s ON st.code_station = s.code_station
+                    WHERE {" AND ".join(where_clauses)}
+                    ORDER BY st.debit_max_jour DESC
+                    LIMIT 10
+                """
+
         # --- NOMBRE DE STATIONS ---
-        if "nombre" in q and "station" in q:
+        if any(w in q for w in ['nombre', 'combien', 'total', 'nb']) and ('station' in q or 'stations' in q):
             if "gouvernorat" in q or "gouv" in q:
                 return """
                     SELECT gouvernorat, COUNT(*) as nb_stations
                     FROM station
-                    WHERE gouvernorat IS NOT NULL
+                    WHERE gouvernorat IS NOT NULL AND gouvernorat != ''
                     GROUP BY gouvernorat
                     ORDER BY nb_stations DESC
                 """
             return "SELECT COUNT(*) as total_stations FROM station"
-        
-        # --- PLUS GRAND / MAXIMUM ---
-        if "plus grand" in q or "maximum" in q or "le plus" in q:
-            if "station" in q and ("nombre" in q or "nb" in q):
-                return """
-                    SELECT gouvernorat, COUNT(*) as nb_stations
-                    FROM station
-                    WHERE gouvernorat IS NOT NULL
-                    GROUP BY gouvernorat
-                    ORDER BY nb_stations DESC
-                    LIMIT 1
-                """
-            if "débit" in q or "debit" in q:
-                return """
-                    SELECT s.nom, s.gouvernorat, st.debit_max_jour
-                    FROM statistiques_annuelles st
-                    JOIN station s ON st.code_station = s.code_station
-                    WHERE st.debit_max_jour::text <> 'NaN'
-                    ORDER BY st.debit_max_jour DESC
-                    LIMIT 1
-                """
-            if "surface" in q or "superficie" in q:
-                return """
-                    SELECT nom, gouvernorat, superficie_km2
-                    FROM station
-                    ORDER BY superficie_km2 DESC NULLS LAST
-                    LIMIT 1
-                """
-        
+
         # --- COURS D'EAU ---
-        if "cours d'eau" in q or "coupe d'eau" in q:
+        if "cours d'eau" in q or "coupe d'eau" in q or "oued" in q:
             if "liste" in q or "tous" in q:
                 return "SELECT DISTINCT cours_eau FROM station WHERE cours_eau IS NOT NULL AND cours_eau != '' ORDER BY cours_eau"
             if "station" in q:
                 return "SELECT nom, cours_eau FROM station WHERE cours_eau IS NOT NULL AND cours_eau != '' ORDER BY cours_eau"
-        
+
+        # --- STATIONS D'UN GOUVERNORAT ---
+        if gouvernorat:
+            return f"""
+                SELECT nom as station, gouvernorat, cours_eau
+                FROM station
+                WHERE UPPER(gouvernorat) LIKE '%{gouvernorat}%'
+                ORDER BY nom
+                LIMIT 15
+            """
+
         # --- STATION SPÉCIFIQUE ---
-        if "station" in q:
-            match = re.search(r'station\s+([a-zA-Z\s\-]+)', q)
+        if "station" in q and not any(w in q for w in ['combien', 'nombre', 'liste', 'toutes', 'tous']):
+            match = re.search(r'station\s+(?:de\s+|du\s+|d\')?([a-zA-Z\s\-]+)', q)
             if match:
                 name = match.group(1).strip()
-                return f"SELECT * FROM station WHERE LOWER(nom) LIKE LOWER('%{name}%')"
-        
+                if name and name not in ('en tout', 'au total'):
+                    return f"SELECT nom as station, gouvernorat, cours_eau FROM station WHERE LOWER(nom) LIKE LOWER('%{name}%')"
+
         # --- STATISTIQUES GÉNÉRALES ---
-        if "statistique" in q or "général" in q:
+        if "statistique" in q or "général" in q or "global" in q:
             return """
                 SELECT 
                     COUNT(*) as total_stations,
@@ -566,51 +652,31 @@ Requête SQL :
                     COUNT(DISTINCT cours_eau) as nb_cours_eau
                 FROM station
             """
-        
-        # --- DÉBITS ---
-        if "débit" in q or "debit" in q:
-            if "moyen" in q:
-                return """
-                    SELECT s.nom, s.gouvernorat, st.debit_moyen
-                    FROM statistiques_annuelles st
-                    JOIN station s ON st.code_station = s.code_station
-                    WHERE st.debit_moyen::text <> 'NaN'
-                    ORDER BY st.debit_moyen DESC
-                    LIMIT 10
-                """
-            return """
-                SELECT s.nom, s.gouvernorat, st.debit_max_jour
-                FROM statistiques_annuelles st
-                JOIN station s ON st.code_station = s.code_station
-                WHERE st.debit_max_jour::text <> 'NaN'
-                ORDER BY st.debit_max_jour DESC
-                LIMIT 10
-            """
-        
-        # --- CRUES ---
-        if "crue" in q or "crues" in q:
-            return """
-                SELECT s.nom, s.gouvernorat, c.debit_max_m3s, c.date_debut
-                FROM crues c
-                JOIN station s ON c.code_station = s.code_station
-                ORDER BY c.debit_max_m3s DESC
-                LIMIT 10
-            """
-        
-        # Requête par défaut - retourner quelques stations
-        return "SELECT * FROM station LIMIT 10"
+
+        if not fallback_default:
+            return None
+
+        # Requête par défaut - retourner quelques stations avec nom et gouvernorat utiles
+        return "SELECT nom as station, gouvernorat, cours_eau FROM station LIMIT 10"
 
     def understand_question(self, question):
         """Comprend la question et génère une requête SQL"""
-        # 1. Essayer avec le LLM
+        # 1. Vérifier si la question correspond à une intention hydrométrique structurée
+        # (rapide, déterministe et sans hallucination)
+        sql = self._understand_with_keywords(question, fallback_default=False)
+        if sql:
+            print(f"🎯 Requête SQL déterministe générée (0s) : {sql.strip()[:90]}...")
+            return sql
+
+        # 2. Si question ouverte ou complexe, faire appel au LLM
         sql = self._understand_with_llm(question)
         if sql:
             print(f"🤖 LLM a généré: {sql[:100]}...")
             return sql
         
-        # 2. Fallback: mots-clés
-        print("🔍 Utilisation de la méthode par mots-clés")
-        return self._understand_with_keywords(question)
+        # 3. Fallback: mots-clés par défaut
+        print("🔍 Utilisation de la requête par défaut")
+        return self._understand_with_keywords(question, fallback_default=True)
 
     def indexer_stations_dans_zvec(self):
         """Lit toutes les stations de la base PostgreSQL et les indexe dans Zvec"""
@@ -785,23 +851,16 @@ Requête SQL :
 
         query = f"""
             SELECT
-                COUNT(DISTINCT s.code_station) as nb_stations,
-                COUNT(DISTINCT s.gouvernorat) as nb_gouvernorats,
+                (SELECT COUNT(*) FROM ({base_select}) s_all) as nb_stations,
+                (SELECT COUNT(DISTINCT s_all.gouvernorat) FROM ({base_select}) s_all WHERE s_all.gouvernorat IS NOT NULL AND s_all.gouvernorat <> '') as nb_gouvernorats,
                 AVG(st.debit_moyen) FILTER (WHERE st.debit_moyen::text <> 'NaN') as debit_moyen_global,
                 MAX(st.debit_max_jour) FILTER (WHERE st.debit_max_jour::text <> 'NaN') as debit_max_global,
                 SUM(st.volume_total_hm3) FILTER (WHERE st.volume_total_hm3::text <> 'NaN') as volume_total_global,
                 AVG(st.taux_remplissage) as taux_remplissage_moyen,
                 MIN(st.annee) as annee_min,
                 MAX(st.annee) as annee_max
-            FROM ({base_select}) s
-            JOIN statistiques_annuelles st ON s.code_station = st.code_station
+            FROM statistiques_annuelles st
         """
-        # NOTE : le cast ::text <> 'NaN' exclut les NaN (IS NOT NULL ne suffit
-        # pas ici : NaN est une valeur numerique valide en PostgreSQL, pas un
-        # NULL, et PostgreSQL considere NaN = NaN comme VRAI - donc un simple
-        # `colonne = colonne` ne les filtre pas). Un seul enregistrement
-        # corrompu avec NaN suffit sinon a rendre AVG/MAX/SUM NaN pour tout
-        # l'agregat.
         return self._execute_query(query)
     
     def get_best_stations(self, critere="debit_moyen", limit=10):
@@ -824,6 +883,8 @@ Requête SQL :
             FROM statistiques_annuelles st
             JOIN ({base_select}) s ON st.code_station = s.code_station
             WHERE st.annee = (SELECT MAX(annee) FROM statistiques_annuelles)
+              AND st.{critere} IS NOT NULL
+              AND st.{critere}::text <> 'NaN'
             ORDER BY st.{critere} DESC
             LIMIT %s
         """
@@ -997,53 +1058,111 @@ Ne mentionne pas le terme "score de similarité" directement ou de manière trop
         return "\n".join(lines)
 
     def _format_answer(self, question, data, sql):
-        """Formate la réponse de manière naturelle"""
+        """Formate la réponse de manière naturelle et lisible"""
         if not data:
-            return "Aucune donnée trouvée pour votre question."
+            return "Aucune donnée trouvée pour votre question dans la base de données hydrométrique."
         
-        # Si le LLM est disponible, l'utiliser pour enrichir la réponse
-        if self.use_llm and self.llm:
-            try:
-                intent = "smart_query"
-                response = self.llm.enrich_response(question, data, intent)
-                if response:
-                    return response
-            except Exception as e:
-                print(f"⚠️ Erreur enrichissement LLM: {e}")
+        first = data[0] if isinstance(data, list) and len(data) > 0 else {}
         
-        # Formatage basique
-        if len(data) == 1:
-            row = data[0]
-            parts = []
-            for key, value in row.items():
-                if value is not None and key not in ['id', 'code_station']:
-                    if isinstance(value, float):
-                        parts.append(f"{key}: {value:.2f}")
+        # 1. Format CRUES (débits de pointe, crues historiques)
+        if any(k in first for k in ['debit_max_m3s', 'date_debut']):
+            lines = [f"🌊 **Crues enregistrées ({len(data)} résultat(s)) :**\n"]
+            for i, row in enumerate(data, 1):
+                st = row.get('station') or row.get('nom') or 'Station'
+                gouv = row.get('gouvernorat', '')
+                gouv_str = f" ({gouv})" if gouv else ""
+                annee = row.get('annee')
+                annee_str = f" — Année {annee}" if annee else ""
+                debit = row.get('debit_max_m3s')
+                debit_str = f"**{float(debit):.2f} m³/s**" if debit is not None else "N/A"
+                
+                date_val = row.get('date_debut')
+                if date_val is not None:
+                    try:
+                        date_str = pd.to_datetime(date_val).strftime('%d/%m/%Y à %H:%M')
+                    except Exception:
+                        date_str = str(date_val)
+                    lines.append(f"  {i}. **{st}**{gouv_str}{annee_str} : débit de pointe de {debit_str} le {date_str}")
+                else:
+                    lines.append(f"  {i}. **{st}**{gouv_str}{annee_str} : débit de pointe de {debit_str}")
+            return "\n".join(lines)
+
+        # 2. Format DÉBITS ET VOLUMES (statistiques annuelles ou journalières)
+        if any(k in first for k in ['volume_total_hm3', 'debit_max_jour', 'debit_moyen']):
+            lines = [f"💧 **Données de débit et volume ({len(data)} résultat(s)) :**\n"]
+            for i, row in enumerate(data, 1):
+                st = row.get('station') or row.get('nom') or 'Station'
+                gouv = row.get('gouvernorat', '')
+                gouv_str = f" ({gouv})" if gouv else ""
+                annee = row.get('annee')
+                annee_str = f" [Année {annee}]" if annee else ""
+                
+                details = []
+                if 'debit_max_jour' in row and row['debit_max_jour'] is not None and str(row['debit_max_jour']).lower() != 'nan':
+                    try:
+                        details.append(f"Débit max : **{float(row['debit_max_jour']):.2f} m³/s**")
+                    except:
+                        pass
+                if 'debit_moyen' in row and row['debit_moyen'] is not None and str(row['debit_moyen']).lower() != 'nan':
+                    try:
+                        details.append(f"Débit moyen : **{float(row['debit_moyen']):.2f} m³/s**")
+                    except:
+                        pass
+                if 'volume_total_hm3' in row and row['volume_total_hm3'] is not None and str(row['volume_total_hm3']).lower() != 'nan':
+                    try:
+                        details.append(f"Volume : **{float(row['volume_total_hm3']):.2f} Hm³**")
+                    except:
+                        pass
+                detail_text = " — " + " | ".join(details) if details else ""
+                lines.append(f"  {i}. **{st}**{gouv_str}{annee_str}{detail_text}")
+            return "\n".join(lines)
+
+        # 3. Format STATIONS HYDROMÉTRIQUES
+        if 'station' in first or ('nom' in first and 'gouvernorat' in first):
+            lines = [f"📍 **Stations hydrométriques ({len(data)} résultat(s)) :**\n"]
+            for i, row in enumerate(data, 1):
+                st = row.get('station') or row.get('nom')
+                gouv = row.get('gouvernorat')
+                cours = row.get('cours_eau')
+                parts = [f"**{st}**"]
+                if gouv:
+                    parts.append(f"Gouvernorat : {gouv}")
+                if cours:
+                    parts.append(f"Cours d'eau : {cours}")
+                lines.append(f"  {i}. " + " — ".join(parts))
+            return "\n".join(lines)
+
+        # 4. Format COMPTAGES / STATISTIQUES GLOBALES
+        if any(k in first for k in ['total_stations', 'nb_stations', 'nb_gouvernorats', 'nb_cours_eau']):
+            lines = ["📊 **Statistiques :**\n"]
+            for row in data:
+                for k, v in row.items():
+                    label = k.replace('_', ' ').capitalize()
+                    lines.append(f"  • **{label}** : {v}")
+            return "\n".join(lines)
+
+        # 5. Format COURS D'EAU
+        if 'cours_eau' in first and len(first) == 1:
+            lines = [f"🌊 **Cours d'eau répertoriés ({len(data)} résultat(s)) :**\n"]
+            for i, row in enumerate(data, 1):
+                lines.append(f"  {i}. {row.get('cours_eau')}")
+            return "\n".join(lines)
+
+        # 6. Format générique propre (exclut coordonnées brutes et IDs)
+        lines = [f"📊 **{len(data)} résultat(s) :**\n"]
+        for i, row in enumerate(data[:15], 1):
+            clean_parts = []
+            for k, v in row.items():
+                if k in ['id', 'code_station', 'coordonnee_x', 'coordonnee_y', 'x_utm', 'y_utm']:
+                    continue
+                if v is not None and str(v).lower() != 'nan':
+                    if isinstance(v, float):
+                        clean_parts.append(f"{k}: {v:.2f}")
                     else:
-                        parts.append(f"{key}: {value}")
-            if parts:
-                return "📊 " + ", ".join(parts)
-        
-        # Si plusieurs résultats
-        if len(data) > 1:
-            if data:
-                keys = list(data[0].keys())
-                lines = [f"📊 {len(data)} résultat(s):"]
-                for i, row in enumerate(data[:10], 1):
-                    display_parts = []
-                    for key in keys[:4]:
-                        if key not in ['id', 'code_station']:
-                            value = row.get(key)
-                            if value is not None:
-                                if isinstance(value, float):
-                                    display_parts.append(f"{value:.2f}")
-                                else:
-                                    display_parts.append(str(value))
-                    if display_parts:
-                        lines.append(f"  {i}. " + " | ".join(display_parts))
-                return "\n".join(lines)
-        
-        return f"📊 {len(data)} résultat(s) trouvé(s)"
+                        clean_parts.append(f"{k}: {v}")
+            if clean_parts:
+                lines.append(f"  {i}. " + " | ".join(clean_parts))
+        return "\n".join(lines)
 
 
 if __name__ == "__main__":

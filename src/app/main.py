@@ -155,7 +155,7 @@ def _health_snapshot():
         llm_status = {
             "available": False,
             "model_loaded": False,
-            "model": os.getenv("LLM_MODEL", "mistral"),
+            "model": os.getenv("LLM_MODEL", "hydrometrie"),
             "host": os.getenv("LLM_HOST", "http://localhost:11434"),
             "status_message": f"Erreur d'initialisation: {exc}",
             "last_check": None,
@@ -182,7 +182,7 @@ def _health_snapshot():
         },
         "model": {
             "ok": bool(llm_status.get("model_loaded")),
-            "value": llm_status.get("model", "mistral"),
+            "value": llm_status.get("model", "hydrometrie"),
             "detail": f"Hôte: {llm_status.get('host', '')}",
             "state": "ok" if llm_status.get("model_loaded") else "warn",
             "state_label": "Chargé" if llm_status.get("model_loaded") else "Absent",
@@ -318,7 +318,7 @@ def render_import_section():
 # TABLEAU DE BORD
 # ============================================================
 
-@st.cache_data(show_spinner=False, ttl=600)
+@st.cache_data(show_spinner=False, ttl=30)
 def _charger_donnees_dashboard():
     rag = orchestrator.get_agent('rag').rag
     stats = rag.get_global_stats()
@@ -360,6 +360,12 @@ def render_dashboard():
     stats = donnees['stats']
 
     render_status_strip()
+
+    col_ref, _ = st.columns([2, 5])
+    with col_ref:
+        if st.button("🔄 Actualiser les données", key="btn_refresh_dashboard"):
+            st.cache_data.clear()
+            st.rerun()
 
     render_import_section()
 

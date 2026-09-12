@@ -64,6 +64,9 @@ services:
       DB_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
       DB_SCHEMA: public
       PYTHONPATH: /app
+      LLM_HOST: http://host.docker.internal:11434
+      LLM_MODEL: hydrometrie
+      LLM_TIMEOUT: 180
     volumes:
       - ./data:/app/data
       - ./output:/app/output
@@ -94,6 +97,9 @@ services:
       DB_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
       DB_SCHEMA: public
       PYTHONPATH: /app
+      LLM_HOST: http://host.docker.internal:11434
+      LLM_MODEL: hydrometrie
+      LLM_TIMEOUT: 180
     ports:
       - "8501:8501"
     volumes:
