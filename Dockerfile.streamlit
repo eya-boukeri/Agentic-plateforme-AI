@@ -11,6 +11,7 @@ WORKDIR /app
 RUN apt-get update -o Acquire::Retries=3 && apt-get install -y --no-install-recommends \
     libpq-dev \
     libexpat1 \
+    mdbtools \
     && rm -rf /var/lib/apt/lists/*
 
 # Installer les dépendances Python

@@ -512,12 +512,53 @@ Requête SQL :
         return True
 
     def _extraire_entites(self, question):
-        """Extrait l'année et le gouvernorat d'une question en langage naturel."""
+        """Extrait l'année, la date exacte, le gouvernorat et les stations d'une question en langage naturel."""
         q = question.lower().replace('é', 'e').replace('è', 'e').replace('ê', 'e')
         
-        # 1. Année (ex: 2024, 2019)
-        year_match = re.search(r'\b(19\d{2}|20\d{2})\b', q)
-        annee = int(year_match.group(1)) if year_match else None
+        # 1. Date exacte ou année
+        date_iso = None
+        date_fr = None
+        annee = None
+
+        # Format DD/MM/YYYY ou DD-MM-YYYY
+        m1 = re.search(r'\b(0?[1-9]|[12]\d|3[01])[/\-](0?[1-9]|1[0-2])[/\-](19\d{2}|20\d{2})\b', q)
+        if m1:
+            jour = m1.group(1).zfill(2)
+            mois = m1.group(2).zfill(2)
+            annee_str = m1.group(3)
+            date_iso = f"{annee_str}-{mois}-{jour}"
+            date_fr = f"{jour}/{mois}/{annee_str}"
+            annee = int(annee_str)
+        else:
+            # Format YYYY-MM-DD
+            m2 = re.search(r'\b(19\d{2}|20\d{2})-(0?[1-9]|1[0-2])-(0?[1-9]|[12]\d|3[01])\b', q)
+            if m2:
+                annee_str = m2.group(1)
+                mois = m2.group(2).zfill(2)
+                jour = m2.group(3).zfill(2)
+                date_iso = f"{annee_str}-{mois}-{jour}"
+                date_fr = f"{jour}/{mois}/{annee_str}"
+                annee = int(annee_str)
+            else:
+                # Format textuel : 15 mai 2024 / 1er mai 2024
+                mois_map = {
+                    'janvier': '01', 'fevrier': '02', 'février': '02', 'mars': '03', 'avril': '04',
+                    'mai': '05', 'juin': '06', 'juillet': '07', 'aout': '08', 'août': '08',
+                    'septembre': '09', 'octobre': '10', 'novembre': '11', 'decembre': '12', 'décembre': '12'
+                }
+                pattern_text = r'\b(0?[1-9]|[12]\d|3[01]|1er)\s+(' + '|'.join(mois_map.keys()) + r')\s+(19\d{2}|20\d{2})\b'
+                m3 = re.search(pattern_text, q)
+                if m3:
+                    jour_raw = m3.group(1).replace('1er', '01')
+                    jour = jour_raw.zfill(2)
+                    mois = mois_map[m3.group(2)]
+                    annee_str = m3.group(3)
+                    date_iso = f"{annee_str}-{mois}-{jour}"
+                    date_fr = f"{jour}/{mois}/{annee_str}"
+                    annee = int(annee_str)
+                else:
+                    year_match = re.search(r'\b(19\d{2}|20\d{2})\b', q)
+                    annee = int(year_match.group(1)) if year_match else None
         
         # 2. Gouvernorats tunisiens (avec gestion des variantes)
         GOUVS = [
@@ -538,22 +579,76 @@ Requête SQL :
                     gouvernorat = g.upper()
                 break
                 
-        return annee, gouvernorat
+        # 3. Stations hydrométriques connues et alias
+        stations = []
+        aliases_stations = {
+            'sidi salem': ['1485400180', '1485900129'],
+            'bou salem': ['1485400180'],
+            'medjez el bab': ['1485900139', '1485900140'],
+            'medjez': ['1485900139', '1485900140'],
+            'mejez el bab': ['1485900139', '1485900140'],
+            'mejez': ['1485900139', '1485900140'],
+            'pont el mouradi': ['1485900140'],
+            'mellegue k13': ['1485101210'],
+            'mellegue': ['1485101210', '1485101211'],
+            'k13': ['1485101210'],
+            'jendouba': ['1485400160'],
+            'ghardimaou': ['1485400110', '1485400111'],
+            'slouguia': ['1485900130'],
+            'jedeida': ['1485900170'],
+            'chemtou': ['1485400130'],
+            'siliana': ['1485501610', '1485501635'],
+            'khenguette zazia': ['1486300140'],
+            'khenguette': ['1486300140'],
+            'el herri': ['1485900141'],
+            'oued beja': ['1485602240'],
+            'tine': ['1483602050', '1483602040'],
+            'joumine': ['1483600130'],
+            'mateur': ['1483600130'],
+            'la madelaine': ['1484100180'],
+            'ain saboun': ['1486200110'],
+        }
+        for alias, codes in sorted(aliases_stations.items(), key=lambda x: -len(x[0])):
+            if re.search(r'\b' + re.escape(alias) + r'\b', q):
+                for c in codes:
+                    if c not in stations:
+                        stations.append(c)
+
+        return annee, gouvernorat, stations, date_iso, date_fr
 
     def _understand_with_keywords(self, question, fallback_default=True):
-        """Comprend la question avec extraction d'entités (gouvernorat, année) et mots-clés"""
+        """Comprend la question avec extraction d'entités (date, année, gouvernorat, stations) et mots-clés"""
         q = question.lower()
-        annee, gouvernorat = self._extraire_entites(question)
+        annee, gouvernorat, stations, date_iso, date_fr = self._extraire_entites(question)
         
+        # --- DÉBITS JOURNALIERS À DATE SPÉCIFIQUE ---
+        if date_iso:
+            where_clauses = [f"d.jour = '{date_iso}'"]
+            if stations:
+                st_in = "'" + "','".join(stations) + "'"
+                where_clauses.append(f"s.code_station IN ({st_in})")
+            elif gouvernorat:
+                where_clauses.append(f"UPPER(s.gouvernorat) LIKE '%{gouvernorat}%'")
+            return f"""
+                SELECT s.nom as station, s.gouvernorat, d.jour, d.debit_moyen, d.debit_max
+                FROM debits_journaliers d
+                JOIN station s ON d.code_station = s.code_station
+                WHERE {" AND ".join(where_clauses)}
+                ORDER BY d.debit_moyen DESC
+            """
+
         # --- CRUES (avec fautes d'orthographe courantes : crus, crue, crues, inondation...) ---
         if any(w in q for w in ['crue', 'crues', 'crus', 'cru', 'inondation', 'inondations', 'pic']):
             where_clauses = ["1=1"]
-            if gouvernorat:
+            if stations:
+                st_in = "'" + "','".join(stations) + "'"
+                where_clauses.append(f"s.code_station IN ({st_in})")
+            elif gouvernorat:
                 where_clauses.append(f"UPPER(s.gouvernorat) LIKE '%{gouvernorat}%'")
             if annee:
                 where_clauses.append(f"c.annee = {annee}")
             return f"""
-                SELECT s.nom as station, s.gouvernorat, c.annee, c.debit_max_m3s, c.date_debut
+                SELECT s.nom as station, s.gouvernorat, c.annee, c.debit_max_m3s, c.date_debut, c.volume_ecoule_hm3
                 FROM crues c
                 JOIN station s ON c.code_station = s.code_station
                 WHERE {" AND ".join(where_clauses)}
@@ -565,7 +660,10 @@ Requête SQL :
         if any(w in q for w in ['débit', 'debit', 'volume', 'hm3', 'm3/s', 'ecoulement', 'écoulement', 'maximal', 'moyen']):
             if "volume" in q or "hm3" in q:
                 where_clauses = ["st.volume_total_hm3::text <> 'NaN'"]
-                if gouvernorat:
+                if stations:
+                    st_in = "'" + "','".join(stations) + "'"
+                    where_clauses.append(f"s.code_station IN ({st_in})")
+                elif gouvernorat:
                     where_clauses.append(f"UPPER(s.gouvernorat) LIKE '%{gouvernorat}%'")
                 if annee:
                     where_clauses.append(f"st.annee = {annee}")
@@ -579,7 +677,10 @@ Requête SQL :
                 """
             elif "moyen" in q or "moyenne" in q:
                 where_clauses = ["st.debit_moyen::text <> 'NaN'"]
-                if gouvernorat:
+                if stations:
+                    st_in = "'" + "','".join(stations) + "'"
+                    where_clauses.append(f"s.code_station IN ({st_in})")
+                elif gouvernorat:
                     where_clauses.append(f"UPPER(s.gouvernorat) LIKE '%{gouvernorat}%'")
                 if annee:
                     where_clauses.append(f"st.annee = {annee}")
@@ -593,7 +694,10 @@ Requête SQL :
                 """
             else:
                 where_clauses = ["st.debit_max_jour::text <> 'NaN'"]
-                if gouvernorat:
+                if stations:
+                    st_in = "'" + "','".join(stations) + "'"
+                    where_clauses.append(f"s.code_station IN ({st_in})")
+                elif gouvernorat:
                     where_clauses.append(f"UPPER(s.gouvernorat) LIKE '%{gouvernorat}%'")
                 if annee:
                     where_clauses.append(f"st.annee = {annee}")
@@ -605,6 +709,25 @@ Requête SQL :
                     ORDER BY st.debit_max_jour DESC
                     LIMIT 10
                 """
+
+        # --- DONNÉES / MESURES POUR UNE ANNÉE OU UNE STATION ---
+        if annee or any(w in q for w in ['donnée', 'données', 'donnee', 'donnees', 'mesure', 'mesures']):
+            where_clauses = ["1=1"]
+            if stations:
+                st_in = "'" + "','".join(stations) + "'"
+                where_clauses.append(f"s.code_station IN ({st_in})")
+            elif gouvernorat:
+                where_clauses.append(f"UPPER(s.gouvernorat) LIKE '%{gouvernorat}%'")
+            if annee:
+                where_clauses.append(f"st.annee = {annee}")
+            return f"""
+                SELECT s.nom as station, s.gouvernorat, st.annee, st.debit_max_jour, st.debit_moyen, st.volume_total_hm3
+                FROM statistiques_annuelles st
+                JOIN station s ON st.code_station = s.code_station
+                WHERE {" AND ".join(where_clauses)}
+                ORDER BY st.debit_max_jour DESC
+                LIMIT 10
+            """
 
         # --- NOMBRE DE STATIONS ---
         if any(w in q for w in ['nombre', 'combien', 'total', 'nb']) and ('station' in q or 'stations' in q):
@@ -986,15 +1109,27 @@ class AgentRAGOrchestrator:
         """
         Répond à n'importe quelle question
         1. Essayer de comprendre la question et d'interroger la base via SQL
-        2. Si aucun résultat ou si la question porte sur une recherche sémantique/floue de station,
-           faire une recherche sémantique avec Zvec.
-        3. Formater la réponse.
+        2. Si aucun résultat et qu'il s'agit d'une recherche descriptive de station, faire une recherche sémantique avec Zvec.
+        3. Si aucune donnée temporelle ou de mesure n'est trouvée, répondre explicitement qu'aucune donnée n'existe dans la base.
+        4. Formater la réponse.
         """
         print(f"🔍 Question: {question}")
         
         data = None
         sql = None
         is_semantic_fallback = False
+
+        # Extraire les entités pour vérifier s'il s'agit d'une recherche temporelle / de données
+        annee, gouvernorat, stations, date_iso, date_fr = self.rag._extraire_entites(question)
+        est_requete_donnees = bool(
+            date_iso or annee or stations or any(
+                w in question.lower() for w in [
+                    'crue', 'crues', 'crus', 'inondation', 'debit', 'débit',
+                    'volume', 'hm3', 'moyen', 'maximum', 'statistique', 'eau',
+                    'donnée', 'données', 'donnee', 'donnees', 'mesure', 'mesures'
+                ]
+            )
+        )
         
         # 1. Tenter la recherche SQL classique
         sql = self.rag.understand_question(question)
@@ -1008,19 +1143,59 @@ class AgentRAGOrchestrator:
                 print(f"📝 SQL de secours: {sql}")
                 data = self.rag._execute_query(sql)
                 
-        # 2. Si pas de données trouvées et que Zvec est connecté
-        if (not data or len(data) == 0) and self.rag.zvec_db:
-            print("🔍 Aucun résultat SQL ou échec. Tentative de recherche sémantique via Zvec...")
-            semantic_results = self.rag.recherche_semantique_station(question, limit=5)
-            if semantic_results:
-                data = semantic_results
-                is_semantic_fallback = True
-                print(f"🧠 Recherche sémantique Zvec a trouvé {len(data)} stations similaires.")
-                
-        # 3. Formater la réponse
-        if is_semantic_fallback:
-            return self._format_semantic_answer(question, data)
+        # 2. Si pas de données trouvées dans la base :
+        if not data or len(data) == 0:
+            # Ne faire de recherche sémantique Zvec QUE si c'est explicitement une recherche descriptive de station
+            # et JAMAIS pour une demande de données à une date/période donnée !
+            if not est_requete_donnees and self.rag.zvec_db and any(
+                w in question.lower() for w in ['station', 'cherche', 'trouve', 'situe', 'localisation', 'ou se trouve', 'pres de']
+            ):
+                print("🔍 Tentative de recherche sémantique de station via Zvec...")
+                semantic_results = self.rag.recherche_semantique_station(question, limit=5)
+                if semantic_results:
+                    data = semantic_results
+                    is_semantic_fallback = True
+                    print(f"🧠 Recherche sémantique Zvec a trouvé {len(data)} stations similaires.")
+                    return self._format_semantic_answer(question, data)
+
+            # Si c'était une requête de données temporelles/factuelles, répondre explicitement qu'aucune donnée n'existe dans la base
+            print(f"ℹ️ Aucune donnée trouvée dans la base pour la requête temporelle/factuelle.")
+            return self._format_no_data_answer(question, annee=annee, date_fr=date_fr, stations=stations, gouvernorat=gouvernorat)
+
         return self._format_answer(question, data, sql)
+
+    def _format_no_data_answer(self, question, annee=None, date_fr=None, stations=None, gouvernorat=None):
+        """Formate une réponse claire et explicite indiquant l'absence de données dans la base."""
+        elements = []
+        if date_fr:
+            elements.append(f"la date du **{date_fr}**")
+        elif annee:
+            elements.append(f"l'année **{annee}**")
+
+        if stations:
+            stations_info = self.rag.get_stations_info() if hasattr(self.rag, 'get_stations_info') else []
+            stations_noms = []
+            for code in stations:
+                st = next((s for s in stations_info if str(s.get('code_station')) == str(code)), None)
+                if st and st.get('nom'):
+                    stations_noms.append(st['nom'])
+            if stations_noms:
+                elements.append(f"la station **{', '.join(set(stations_noms))}**")
+        elif gouvernorat:
+            elements.append(f"le gouvernorat de **{gouvernorat}**")
+
+        if elements:
+            contexte = " pour " + " et ".join(elements)
+        else:
+            contexte = " pour les critères demandés"
+
+        return (
+            f"⚠️ **Aucune donnée trouvée dans la base hydrométrique{contexte}.**\n\n"
+            f"ℹ️ **Précisions :**\n"
+            f"• Les mesures enregistrées dans la base couvrent principalement les années hydrologiques récentes (**2019 à 2024**).\n"
+            f"• Si vous recherchez un événement précis, vérifiez la date ou essayez une période couverte par le réseau de mesure.\n"
+            f"• Si de nouvelles données viennent d'être importées dans la base, demandez le recalcul : *« Recalcule les statistiques pour {annee or 2024} »*."
+        )
 
     def _format_semantic_answer(self, question, data):
         """Formate la réponse sémantique en utilisant le LLM"""
@@ -1060,7 +1235,31 @@ Ne mentionne pas le terme "score de similarité" directement ou de manière trop
     def _format_answer(self, question, data, sql):
         """Formate la réponse de manière naturelle et lisible"""
         if not data:
-            return "Aucune donnée trouvée pour votre question dans la base de données hydrométrique."
+            return "⚠️ Aucune donnée trouvée dans la base hydrométrique pour votre requête."
+        
+        first = data[0] if isinstance(data, list) and len(data) > 0 else {}
+
+        # 0. Format DÉBITS JOURNALIERS (date spécifique)
+        if 'jour' in first:
+            lines = [f"🌊 **Débits journaliers enregistrés ({len(data)} résultat(s)) :**\n"]
+            for i, row in enumerate(data, 1):
+                st = row.get('station') or row.get('nom') or 'Station'
+                gouv = row.get('gouvernorat', '')
+                gouv_str = f" ({gouv})" if gouv else ""
+                jour_val = row.get('jour')
+                try:
+                    import pandas as _pd
+                    jour_str = _pd.to_datetime(jour_val).strftime('%d/%m/%Y')
+                except Exception:
+                    jour_str = str(jour_val)
+
+                dmoy = row.get('debit_moyen')
+                dmax = row.get('debit_max')
+                dmoy_str = f"débit moyen : **{float(dmoy):.2f} m³/s**" if dmoy is not None and str(dmoy).lower() != 'nan' else ""
+                dmax_str = f"débit max : **{float(dmax):.2f} m³/s**" if dmax is not None and str(dmax).lower() != 'nan' else ""
+                debit_info = " | ".join(filter(None, [dmoy_str, dmax_str]))
+                lines.append(f"  {i}. **{st}**{gouv_str} le {jour_str} : {debit_info}")
+            return "\n".join(lines)
         
         first = data[0] if isinstance(data, list) and len(data) > 0 else {}
         

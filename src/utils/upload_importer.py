@@ -107,6 +107,129 @@ def trouver_correspondance(nom_excel, stations_connues):
     return meilleur_code, meilleur_nom, meilleur_score
 
 
+def _read_mdb_file(chemin: str) -> pd.DataFrame:
+    """Lit une base de données Microsoft Access (.mdb) et extrait les débits.
+    Supporte les architectures classiques de bases hydrologiques :
+    - Table unique de mesures (format long ou format large)
+    - Tables multiples par station
+    """
+    import subprocess
+    import io
+
+    # 1. Lister les tables via pandas_access ou mdb-tables
+    tables = []
+    try:
+        import pandas_access as mdb
+        tables = mdb.list_tables(chemin)
+    except Exception:
+        pass
+
+    if not tables:
+        try:
+            cmd = ["mdb-tables", "-1", chemin]
+            res = subprocess.check_output(cmd, stderr=subprocess.DEVNULL)
+            tables = [t.strip() for t in res.decode("utf-8", errors="ignore").split("\n") if t.strip()]
+        except Exception as e:
+            raise RuntimeError(f"Impossible de lire le fichier .mdb via mdbtools : {e}")
+
+    if not tables:
+        raise ValueError("Aucune table trouvée dans le fichier Access .mdb.")
+
+    # Filtrer les tables système Access (commençant par MSys)
+    tables_utiles = [t for t in tables if not t.upper().startswith("MSYS")]
+    if not tables_utiles:
+        tables_utiles = tables
+
+    def _extraire_table(nom_table):
+        try:
+            import pandas_access as mdb
+            return mdb.read_table(chemin, nom_table)
+        except Exception:
+            cmd = ["mdb-export", chemin, nom_table]
+            output = subprocess.check_output(cmd, stderr=subprocess.DEVNULL)
+            return pd.read_csv(io.StringIO(output.decode("utf-8", errors="ignore")))
+
+    # 2. Chercher les tables contenant des données de débit ou de mesures
+    mots_cles = ["debit", "débit", "mesure", "datasheet", "donnee", "donnée", "valeur", "hydro", "station"]
+    tables_prioritaires = [t for t in tables_utiles if any(kw in t.lower() for kw in mots_cles)]
+    tables_a_tester = tables_prioritaires if tables_prioritaires else tables_utiles
+
+    dfs_long = []
+    table_large_trouvee = None
+
+    for t in tables_a_tester:
+        try:
+            df_t = _extraire_table(t)
+            if df_t.empty:
+                continue
+
+            col_map = {str(c).lower().strip(): c for c in df_t.columns}
+
+            # Détection colonne Date
+            col_date = None
+            for cand in ["date", "jour", "date_mesure", "date_debit", "datetime", "temps", "time"]:
+                if cand in col_map:
+                    col_date = col_map[cand]
+                    break
+
+            # Détection colonne Station
+            col_station = None
+            for cand in ["station", "id_station", "code_station", "nom_station", "code", "nom"]:
+                if cand in col_map:
+                    col_station = col_map[cand]
+                    break
+
+            # Détection colonne Débit
+            col_debit = None
+            for cand in ["valeur", "debit", "débit", "debit_moyen", "q", "debits", "debit_m3s", "val"]:
+                if cand in col_map:
+                    col_debit = col_map[cand]
+                    break
+
+            # Cas 1 : Format long (Date, Station, Débit)
+            if col_date and col_station and col_debit:
+                df_sub = pd.DataFrame({
+                    "Date": pd.to_datetime(df_t[col_date], errors="coerce", dayfirst=True),
+                    "nom_excel": df_t[col_station].astype(str).str.strip(),
+                    "Valeur": pd.to_numeric(df_t[col_debit], errors="coerce"),
+                }).dropna(subset=["Date", "Valeur"])
+                if not df_sub.empty:
+                    dfs_long.append(df_sub)
+                    continue
+
+            # Cas 2 : Table représentant une station individuelle
+            if col_date and col_debit and not col_station:
+                nom_station_table = t.replace("debit_", "").replace("debits_", "").strip()
+                df_sub = pd.DataFrame({
+                    "Date": pd.to_datetime(df_t[col_date], errors="coerce", dayfirst=True),
+                    "nom_excel": nom_station_table,
+                    "Valeur": pd.to_numeric(df_t[col_debit], errors="coerce"),
+                }).dropna(subset=["Date", "Valeur"])
+                if not df_sub.empty:
+                    dfs_long.append(df_sub)
+                    continue
+
+            # Cas 3 : Format large (colonne 0 = Date, colonnes suivantes = stations)
+            if col_date and len(df_t.columns) > 2 and table_large_trouvee is None:
+                table_large_trouvee = df_t
+
+        except Exception as err:
+            print(f"[avertissement] Erreur lecture table {t} : {err}")
+            continue
+
+    if dfs_long:
+        return pd.concat(dfs_long, ignore_index=True)
+
+    if table_large_trouvee is not None:
+        return table_large_trouvee
+
+    # Repli par défaut
+    if tables_utiles:
+        return _extraire_table(tables_utiles[0])
+
+    raise ValueError("Impossible d'extraire des données exploitables du fichier .mdb.")
+
+
 def _read_tabular_file(chemin: str) -> pd.DataFrame:
     suffix = Path(chemin).suffix.lower()
     if suffix in {".xls", ".xlsx"}:
@@ -116,11 +239,21 @@ def _read_tabular_file(chemin: str) -> pd.DataFrame:
             return pd.read_excel(chemin, sheet_name=0)
     if suffix == ".csv":
         return pd.read_csv(chemin, sep=None, engine="python")
+    if suffix == ".mdb":
+        return _read_mdb_file(chemin)
     raise ValueError(f"Format de fichier non supporte : {suffix}")
 
 
 def charger_fichier(chemin: str) -> pd.DataFrame:
     df = _read_tabular_file(chemin)
+
+    # Si c'est déjà un format long propre (cas MDB ou format normalisé)
+    if set(["Date", "nom_excel", "Valeur"]).issubset(df.columns):
+        df["Date"] = pd.to_datetime(df["Date"], errors="coerce", dayfirst=True)
+        df["nom_excel"] = df["nom_excel"].astype(str).str.replace(r"\s*/\s*D[ée]bit", "", regex=True).str.strip()
+        df["Valeur"] = pd.to_numeric(df["Valeur"], errors="coerce")
+        return df.dropna(subset=["Date", "Valeur"])
+
     df = df.rename(columns={df.columns[0]: "Date"})
     df["Date"] = pd.to_datetime(df["Date"], errors="coerce", dayfirst=True)
 
@@ -138,7 +271,13 @@ def charger_fichier(chemin: str) -> pd.DataFrame:
 
 
 def detecter_fichiers_par_defaut():
-    return sorted(glob.glob("jet*.xls")) + sorted(glob.glob("jet*.xlsx")) + sorted(glob.glob("jet*.csv"))
+    return (
+        sorted(glob.glob("jet*.xls"))
+        + sorted(glob.glob("jet*.xlsx"))
+        + sorted(glob.glob("jet*.csv"))
+        + sorted(glob.glob("*.mdb"))
+        + sorted(glob.glob("jet*.mdb"))
+    )
 
 
 def importer_fichiers(fichiers, db_config=None, confirmer=False):

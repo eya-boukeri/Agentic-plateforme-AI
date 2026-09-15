@@ -33,7 +33,7 @@ from agents.agent_orchestrator import AgentOrchestrator
 from theme import (
     apply_theme, hero_banner, section_title, kpi_card, feature_cards,
     COLOR_TEAL, COLOR_TERRACOTTA, COLOR_MUTED, icon_svg,
-    render_floating_nav, render_sidebar_stars,
+    render_floating_nav, render_institutional_header,
 )
 from utils.upload_importer import build_default_report
 
@@ -57,7 +57,7 @@ def get_db_config():
 st.set_page_config(
     page_title="Annuaire Hydrométrique - DGRE Tunisie",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="collapsed",
 )
 
 
@@ -251,7 +251,7 @@ def render_import_section():
     label = (
         "Fermer l'import de fichiers"
         if st.session_state.show_import_panel
-        else "Importer des fichiers de débits (.xls, .xlsx, .csv)"
+        else "Importer des fichiers de débits (.xls, .xlsx, .csv, .mdb)"
     )
     if st.button(label, width="stretch", key="toggle_import_panel"):
         st.session_state.show_import_panel = not st.session_state.show_import_panel
@@ -267,12 +267,12 @@ def render_import_section():
         unsafe_allow_html=True,
     )
     st.caption(
-        "Déposez un ou plusieurs fichiers .xls, .xlsx ou .csv contenant des débits. "
+        "Déposez un ou plusieurs fichiers .xls, .xlsx, .csv ou bases de données Access .mdb contenant des débits. "
         "Le système essaye de faire la correspondance des stations puis insère seulement les nouvelles lignes."
     )
     fichiers_uploades = st.file_uploader(
         "Joindre des fichiers",
-        type=["xls", "xlsx", "csv"],
+        type=["xls", "xlsx", "csv", "mdb"],
         accept_multiple_files=True,
         label_visibility="visible",
     )
@@ -409,21 +409,7 @@ def render_dashboard():
         section_title("alert", "Crues les plus importantes")
         if donnees['crues']:
             df_crues = pd.DataFrame(donnees['crues'])
-            colonnes = [c for c in ['station', 'gouvernorat', 'annee', 'debit_max_m3s'] if c in df_crues.columns]
-            df_crues = df_crues[colonnes].copy()
-            if 'annee' in df_crues.columns:
-                df_crues['annee'] = df_crues['annee'].apply(
-                    lambda v: str(int(v)) if pd.notna(v) else "—"
-                )
-            if 'debit_max_m3s' in df_crues.columns:
-                df_crues['debit_max_m3s'] = df_crues['debit_max_m3s'].apply(lambda v: fmt_nombre(v, 2))
-            st.dataframe(
-                df_crues.rename(columns={
-                    'station': 'Station', 'gouvernorat': 'Gouvernorat',
-                    'annee': 'Année', 'debit_max_m3s': 'Débit max (m³/s)'
-                }),
-                hide_index=True, width="stretch", height=300,
-            )
+            _table_crues(df_crues)
         else:
             st.caption("Aucune crue enregistrée.")
 
@@ -432,31 +418,194 @@ def render_dashboard():
     if carte and os.path.exists(carte):
         st.image(carte, width="stretch",
                   caption="Découpage administratif, régions hydrographiques et cours d'eau de Tunisie")
+        try:
+            with open(carte, "rb") as f_c:
+                st.download_button(
+                    label="📥 Télécharger la carte nationale (PNG)",
+                    data=f_c.read(),
+                    file_name=os.path.basename(carte),
+                    mime="image/png",
+                    key="dl_carte_pays",
+                    help="Télécharger la carte du réseau hydrométrique national en haute résolution",
+                )
+        except Exception:
+            pass
     else:
         st.caption("Carte indisponible (données SIG manquantes).")
 
 
 def _bar_chart_stations(df):
+    """Affiche un graphique horizontal moderne, raffiné et parfaitement lisible
+    des meilleures stations par débit moyen annuel."""
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
+    import numpy as np
 
-    fig, ax = plt.subplots(figsize=(6.5, 4.2))
-    fig.patch.set_alpha(0)
-    ax.set_facecolor("none")
+    valeurs = df['debit_moyen'].astype(float).values
+    noms_bruts = df['nom'].values
+    n = len(valeurs)
+    max_val = float(np.max(valeurs)) if n > 0 else 1.0
 
-    valeurs = df['debit_moyen'].astype(float)
-    couleurs = [COLOR_TERRACOTTA if v == valeurs.max() else COLOR_TEAL for v in valeurs]
-    ax.barh(df['nom'], valeurs, color=couleurs, height=0.6)
+    # Formatage propre des noms de stations (lisibilité optimale)
+    noms = []
+    for nom in noms_bruts:
+        nom_str = str(nom).strip()
+        if nom_str.isupper() and len(nom_str) > 3:
+            nom_str = nom_str.title()
+        noms.append(nom_str)
+
+    # Dégradé marine élégant et harmonieux (du bleu saphir d'autorité au bleu azur)
+    colors = []
+    for i in range(n):
+        if i == 0:
+            colors.append('#1e40af')  # 1er : Bleu saphir souverain (station de tête)
+        elif i == 1:
+            colors.append('#2563eb')  # 2e : Bleu royal
+        elif i < 4:
+            colors.append('#0284c7')  # 3e-4e : Bleu méditerranéen
+        elif i < 7:
+            colors.append('#0ea5e9')  # 5e-7e : Bleu lagon
+        else:
+            colors.append('#38bdf8')  # 8e-10e : Bleu azur clair
+
+    fig, ax = plt.subplots(figsize=(6.8, 4.3), dpi=180)
+
+    # Fond de carte blanc opaque et net (fini l'effet transparent illisible sur la photo de fond)
+    fig.patch.set_facecolor('#ffffff')
+    ax.set_facecolor('#f8fafc')
+
+    y_pos = np.arange(n)
+    bars = ax.barh(
+        y_pos,
+        valeurs,
+        color=colors,
+        height=0.62,
+        edgecolor='#ffffff',
+        linewidth=1.2,
+        zorder=3
+    )
+
+    # Étiquettes de valeurs chiffrées directement sur chaque barre
+    for i, (bar, v) in enumerate(zip(bars, valeurs)):
+        width = bar.get_width()
+        txt_color = '#1e3a8a' if i == 0 else '#334155'
+        font_weight = 'bold' if i == 0 else '600'
+        ax.annotate(
+            f" {v:.2f} m³/s",
+            xy=(width, bar.get_y() + bar.get_height() / 2),
+            xytext=(4, 0),
+            textcoords="offset points",
+            ha='left',
+            va='center',
+            fontsize=8.5,
+            fontweight=font_weight,
+            color=txt_color,
+            zorder=5
+        )
+
+    ax.set_yticks(y_pos)
+    ax.set_yticklabels(noms, fontsize=9.2, fontweight='600', color='#0f172a')
     ax.invert_yaxis()
-    ax.set_xlabel("Débit moyen (m³/s)", color=COLOR_MUTED, fontsize=9)
-    ax.tick_params(colors=COLOR_MUTED, labelsize=8)
+
+    # Axe X avec marge aérée
+    ax.set_xlim(0, max_val * 1.22)
+    ax.set_xlabel("Débit moyen annuel (m³/s)", fontsize=9.2, fontweight='600', color='#475569', labelpad=8)
+    ax.tick_params(axis='x', colors='#64748b', labelsize=8.5)
+    ax.tick_params(axis='y', length=0)
+
+    # Élimination des bordures superflues
     for spine in ("top", "right", "left"):
         ax.spines[spine].set_visible(False)
-    ax.spines["bottom"].set_color(COLOR_MUTED)
-    ax.grid(axis="x", linewidth=0.4, alpha=0.35)
+    ax.spines["bottom"].set_color('#cbd5e1')
+    ax.spines["bottom"].set_linewidth(1.0)
+
+    # Grille subtile en arrière-plan
+    ax.grid(True, axis="x", linestyle="--", linewidth=0.5, alpha=0.7, color='#e2e8f0', zorder=1)
+
     fig.tight_layout()
     st.pyplot(fig, width="stretch")
+
+
+def _table_crues(df_crues):
+    """Affiche un tableau moderne, lisible et harmonieux des crues les plus importantes,
+    parfaitement aligné avec le style de carte claire du tableau de bord."""
+    colonnes = [c for c in ['station', 'gouvernorat', 'annee', 'debit_max_m3s'] if c in df_crues.columns]
+    df = df_crues[colonnes].copy()
+
+    val_max = 0.0
+    for _, r in df.iterrows():
+        try:
+            val_max = max(val_max, float(r.get('debit_max_m3s') or 0))
+        except (ValueError, TypeError):
+            pass
+
+    rows_html = []
+    for i, (_, r) in enumerate(df.iterrows()):
+        st_name = str(r.get('station') or 'Station').strip()
+        if st_name.isupper() and len(st_name) > 3:
+            st_name = st_name.title()
+
+        gouv = str(r.get('gouvernorat') or '—').strip().upper()
+        annee_raw = r.get('annee')
+        annee = str(int(annee_raw)) if pd.notna(annee_raw) else "—"
+
+        try:
+            d_val = float(r.get('debit_max_m3s'))
+            d_str = fmt_nombre(d_val, 2)
+        except Exception:
+            d_val = 0.0
+            d_str = str(r.get('debit_max_m3s') or "—")
+
+        if i == 0 or (val_max > 0 and d_val >= val_max * 0.9):
+            badge_class = "debit-badge-extreme"
+        elif d_val >= 500.0:
+            badge_class = "debit-badge-high"
+        else:
+            badge_class = "debit-badge-normal"
+
+        rows_html.append(f"""
+        <tr class="crue-row">
+            <td class="crue-td-station">
+                <span class="crue-station-name">{st_name}</span>
+            </td>
+            <td class="crue-td-center">
+                <span class="crue-gouv-badge">{gouv}</span>
+            </td>
+            <td class="crue-td-center">
+                <span class="crue-annee-pill">{annee}</span>
+            </td>
+            <td class="crue-td-right">
+                <span class="crue-debit-badge {badge_class}">{d_str} <span class="crue-unit">m³/s</span></span>
+            </td>
+        </tr>
+        """)
+
+    table_rows = "\n".join(rows_html)
+
+    html = f"""
+    <div class="crue-card-container">
+        <div class="crue-scroll-wrapper">
+            <table class="crue-custom-table">
+                <thead>
+                    <tr>
+                        <th class="crue-th-station">Station</th>
+                        <th class="crue-th-center">Gouvernorat</th>
+                        <th class="crue-th-center">Année</th>
+                        <th class="crue-th-right">Débit de pointe</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {table_rows}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    """
+    if hasattr(st, "html"):
+        st.html(html)
+    else:
+        st.markdown(html, unsafe_allow_html=True)
 
 
 # ============================================================
@@ -526,10 +675,12 @@ def render_chat():
         st.session_state.messages = [{"role": "assistant", "content": MESSAGE_BIENVENUE}]
 
     section_title("lightbulb", "Suggestions")
+    st.markdown('<div class="chat-tags-wrapper">', unsafe_allow_html=True)
     cols = st.columns(len(SUGGESTIONS))
     for col, suggestion in zip(cols, SUGGESTIONS):
         if col.button(suggestion, width="stretch", key=f"sugg_{suggestion}"):
             _executer_requete(suggestion)
+    st.markdown('</div>', unsafe_allow_html=True)
 
     for i, message in enumerate(st.session_state.messages):
         with st.chat_message(message["role"]):
@@ -537,13 +688,29 @@ def render_chat():
             image_path = message.get("image_path")
             if image_path and os.path.exists(image_path):
                 st.image(image_path, width="stretch")
+                try:
+                    with open(image_path, "rb") as f_img:
+                        img_bytes = f_img.read()
+                    nom_fichier = os.path.basename(image_path)
+                    st.download_button(
+                        label="📥 Télécharger le graphique (PNG)",
+                        data=img_bytes,
+                        file_name=nom_fichier,
+                        mime="image/png",
+                        key=f"dl_img_{i}",
+                        help="Télécharger cet hydrogramme / graphique en haute résolution pour vos rapports ou présentations",
+                    )
+                except Exception as e:
+                    st.caption(f"Impossible de préparer le téléchargement de l'image : {e}")
+
             pdf_path = message.get("pdf_path")
             if pdf_path and os.path.exists(pdf_path):
                 with open(pdf_path, "rb") as f:
                     st.download_button(
-                        "Télécharger le PDF", data=f.read(),
+                        "📄 Télécharger le PDF", data=f.read(),
                         file_name=os.path.basename(pdf_path), mime="application/pdf",
                         key=f"dl_{i}",
+                        help="Télécharger le document officiel PDF généré",
                     )
 
     prompt = st.chat_input("Écrivez votre question ou votre demande…")
@@ -576,44 +743,14 @@ if st.query_params.get("refresh") == "1":
     st.query_params.pop("refresh", None)
     st.toast("Données hydrométriques synchronisées avec la base !", icon="🌊")
 
-with st.sidebar:
-    render_sidebar_stars()
-    st.markdown("## DGRE — Tunisie")
-    st.caption("Plateforme Agentic AI · Ressources en eau")
-    st.markdown("---")
-    st.caption("Vue d'état")
-    try:
-        health = _health_snapshot()
-        st.success("Services principaux accessibles" if health["db"]["ok"] and health["llm"]["ok"] else "Certains services demandent vérification")
-        st.caption(f"DB: {health['db']['state_label']} · LLM: {health['llm']['state_label']} · Modèle: {health['model']['state_label']}")
-    except Exception:
-        st.warning("Impossible de calculer l'état de la plateforme")
-
-    current_idx = 0 if st.session_state["selected_page"] == PAGE_DASHBOARD else 1
-    page = st.radio(
-        "Navigation", [PAGE_DASHBOARD, PAGE_ASSISTANT],
-        index=current_idx,
-        key="sidebar_nav_radio",
-        label_visibility="collapsed",
-    )
-    if page != st.session_state["selected_page"]:
-        st.session_state["selected_page"] = page
-        st.query_params["page"] = "dashboard" if page == PAGE_DASHBOARD else "assistant"
-        st.rerun()
-
-    st.markdown("---")
-    st.caption(
-        "Cette plateforme génère automatiquement l'annuaire hydrométrique "
-        "de la DGRE et répond aux questions sur le réseau national : débits, "
-        "crues, stations et ressources en eau de surface."
-    )
-    st.markdown("---")
-    st.caption("République Tunisienne · Direction Générale des Ressources en Eau")
 
 current_page = st.session_state["selected_page"]
 
-# Affichage du menu pilule glassmorphic flottant (Uiverse.io by mymiamo)
+# Affichage du menu pilule glassmorphic flottant (Uiverse.io by mymiamo) - AU-DESSUS des logos
 render_floating_nav(current_page)
+
+# En-tête institutionnel officiel style data.gouv.fr (République Tunisienne + Logo DGRE)
+render_institutional_header()
 
 if current_page == PAGE_DASHBOARD:
     render_dashboard()

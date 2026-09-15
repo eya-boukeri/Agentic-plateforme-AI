@@ -103,108 +103,7 @@ except ImportError:
 # ============================================================
 # STARFIELD (Uiverse.io by amir_6539 - 3 couches cosmiques)
 # ============================================================
-STAR_CSS = f"""
-        /* Fond spatial cosmique Uiverse.io by amir_6539 */
-        section[data-testid="stSidebar"] {{
-            position: relative !important;
-            isolation: isolate !important;
-            overflow: hidden !important;
-            background: radial-gradient(ellipse at bottom, #1b2735 0%, #090a0f 100%) !important;
-        }}
-
-        /* Transparence des conteneurs internes pour laisser briller le ciel etoile */
-        section[data-testid="stSidebar"] [data-testid="stSidebarContent"],
-        section[data-testid="stSidebar"] [data-testid="stSidebarUserContent"],
-        section[data-testid="stSidebar"] [data-testid="stVerticalBlock"] {{
-            background: transparent !important;
-        }}
-
-        /* Couche 1 : 1400 etoiles fines lointaines (60s) */
-        section[data-testid="stSidebar"]::before {{
-            content: "" !important;
-            position: absolute !important;
-            top: 0 !important;
-            left: 0 !important;
-            width: 1.5px !important;
-            height: 1.5px !important;
-            background: transparent !important;
-            box-shadow: {SIDEBAR_LOOP_STARS_1} !important;
-            animation: sidebarStarDrift 60s linear infinite !important;
-            pointer-events: none !important;
-            z-index: 1 !important;
-        }}
-
-        /* Couche 2 : 400 etoiles moyennes intermediaires (110s) */
-        section[data-testid="stSidebar"]::after {{
-            content: "" !important;
-            position: absolute !important;
-            top: 0 !important;
-            left: 0 !important;
-            width: 2.5px !important;
-            height: 2.5px !important;
-            background: transparent !important;
-            box-shadow: {SIDEBAR_LOOP_STARS_2} !important;
-            animation: sidebarStarDrift 110s linear infinite !important;
-            pointer-events: none !important;
-            z-index: 1 !important;
-        }}
-
-        /* Couche 3 : 200 etoiles brillantes proches (160s) */
-        section[data-testid="stSidebar"] [data-testid="stSidebarContent"]::before {{
-            content: "" !important;
-            position: absolute !important;
-            top: 0 !important;
-            left: 0 !important;
-            width: 3.5px !important;
-            height: 3.5px !important;
-            background: transparent !important;
-            box-shadow: {SIDEBAR_LOOP_STARS_3} !important;
-            animation: sidebarStarDrift 160s linear infinite !important;
-            pointer-events: none !important;
-            z-index: 1 !important;
-        }}
-
-        /* Garantit que tous les textes, boutons et labels restent parfaitement au premier plan */
-        section[data-testid="stSidebar"] h2,
-        section[data-testid="stSidebar"] p,
-        section[data-testid="stSidebar"] span,
-        section[data-testid="stSidebar"] label,
-        section[data-testid="stSidebar"] [data-testid="stMarkdown"],
-        section[data-testid="stSidebar"] .stRadio,
-        section[data-testid="stSidebar"] hr,
-        section[data-testid="stSidebar"] .stAlert {{
-            position: relative !important;
-            z-index: 5 !important;
-        }}
-
-        @keyframes sidebarStarDrift {{
-            from {{
-                transform: translateY(0px);
-            }}
-            to {{
-                transform: translateY(-2000px);
-            }}
-        }}
-
-        @keyframes introFadeUp {{
-            0% {{
-                opacity: 0;
-                transform: translateY(24px);
-            }}
-            100% {{
-                opacity: 1;
-                transform: translateY(0);
-            }}
-        }}
-
-        @media (prefers-reduced-motion: reduce) {{
-            section[data-testid="stSidebar"]::before,
-            section[data-testid="stSidebar"]::after,
-            section[data-testid="stSidebar"] [data-testid="stSidebarContent"]::before {{
-                animation: none !important;
-            }}
-        }}
-"""
+STAR_CSS = ""
 
 
 
@@ -220,29 +119,34 @@ def apply_theme(bg_image_b64=None, bg_image_mime="image/jpeg"):
     """
     if bg_image_b64:
         background_layers_css = f"""
-        .stApp::before {{
-            content: "";
-            position: fixed;
-            inset: -30px;
-            z-index: -2;
-            background-image: url('data:{bg_image_mime};base64,{bg_image_b64}');
-            background-size: cover;
-            background-position: center center;
-            background-repeat: no-repeat;
-            filter: blur(10px) saturate(0.9);
-            opacity: 0.55;
-        }}
-        .stApp::after {{
-            content: "";
-            position: fixed;
-            inset: 0;
-            z-index: -1;
-            background-image: linear-gradient(160deg, rgba(207,217,221,0.88) 0%, rgba(233,239,241,0.92) 45%, rgba(207,217,221,0.94) 100%);
-        }}
-        .stApp {{
-            background-color: {COLOR_BG_SOFT};
-        }}
-        """
+.stApp::before {{
+    content: "";
+    position: fixed;
+    inset: -30px;
+    z-index: -2;
+    background-image: url('data:{bg_image_mime};base64,{bg_image_b64}');
+    background-size: cover;
+    background-position: center center;
+    background-repeat: no-repeat;
+    filter: blur(6px) saturate(1.0);
+    opacity: 0.85;               /* était 0.55 */
+}}
+.stApp::after {{
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    background-image: linear-gradient(
+        160deg,
+        rgba(207,217,221,0.55) 0%,   /* était 0.88 */
+        rgba(233,239,241,0.6) 45%,   /* était 0.92 */
+        rgba(207,217,221,0.65) 100%  /* était 0.94 */
+    );
+}}
+.stApp {{
+    background-color: {COLOR_BG_SOFT};
+}}
+"""
     else:
         background_layers_css = f"""
         .stApp {{
@@ -310,32 +214,21 @@ def apply_theme(bg_image_b64=None, bg_image_mime="image/jpeg"):
             letter-spacing: 0.1px;
         }}
 
-        /* ---------- Sidebar (fond cosmique Uiverse.io by amir_6539) ---------- */
-        section[data-testid="stSidebar"] {{
-            background: radial-gradient(ellipse at bottom, #1b2735 0%, #090a0f 100%) !important;
-            border-right: 1px solid rgba(255,255,255,0.08);
-        }}
-        section[data-testid="stSidebar"] * {{
-            color: #eef3f5 !important;
-            position: relative;
-            z-index: 1;
-        }}
-        section[data-testid="stSidebar"] hr {{
-            border-color: rgba(255,255,255,0.14);
-        }}
-        section[data-testid="stSidebar"] .stRadio [role="radiogroup"] {{
-            gap: 0.45rem;
-        }}
-        section[data-testid="stSidebar"] .stRadio label {{
-            background: rgba(255,255,255,0.06);
-            border: 1px solid rgba(255,255,255,0.1);
-            border-radius: 12px;
-            padding: 0.4rem 0.65rem;
-            transition: background 0.15s ease, border-color 0.15s ease;
-        }}
-        section[data-testid="stSidebar"] .stRadio label:hover {{
-            background: rgba(31,111,214,0.22);
-            border-color: rgba(31,111,214,0.4);
+        /* ---------- Masquage complet et definitif de la sidebar ---------- */
+        section[data-testid="stSidebar"],
+        [data-testid="stSidebar"],
+        [data-testid="stSidebarCollapsedControl"],
+        [data-testid="collapsedControl"],
+        button[data-testid="stSidebarCollapseButton"],
+        header [data-testid="stSidebarCollapsedControl"],
+        div[data-testid="stSidebarCollapseButton"] {{
+            display: none !important;
+            visibility: hidden !important;
+            width: 0 !important;
+            height: 0 !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            pointer-events: none !important;
         }}
 
         /* ---------- Starfield (V3.3 - 3 couches) ---------- */
@@ -363,25 +256,26 @@ def apply_theme(bg_image_b64=None, bg_image_mime="image/jpeg"):
 
         .menu {{
             position: relative;
-            width: calc(100% - 20px);
-            max-width: 540px;
-            backdrop-filter: blur(16px) saturate(180%) contrast(150%);
-            -webkit-backdrop-filter: blur(16px) saturate(180%) contrast(150%);
-            background: rgba(16, 52, 92, 0.52);
-            border: 1px solid var(--glass-border);
-            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.16), 0 0 25px rgba(0, 122, 255, 0.22);
-            padding: 7px 10px;
-            border-radius: 99rem;
+            width: min(920px, calc(100% - 32px));
+            max-width: 920px;
+            backdrop-filter: blur(18px) saturate(180%) contrast(140%);
+            -webkit-backdrop-filter: blur(18px) saturate(180%) contrast(140%);
+            background: rgba(16, 43, 70, 0.65);
+            border: 1px solid rgba(255, 255, 255, 0.28);
+            box-shadow: 0 12px 36px rgba(0, 0, 0, 0.20), 0 0 28px rgba(31, 111, 214, 0.25);
+            padding: 8px 12px;
+            border-radius: 999px;
             display: flex;
-            justify-content: center;
-            gap: 8px;
+            justify-content: space-between;
+            align-items: center;
+            gap: 12px;
             pointer-events: auto;
-            transition: box-shadow 0.3s ease, border-color 0.3s ease, transform 0.2s ease;
+            transition: box-shadow 0.3s ease, border-color 0.3s ease, width 0.3s ease;
         }}
 
         .menu:hover {{
-            box-shadow: 0 14px 38px rgba(0, 0, 0, 0.22), 0 0 35px rgba(0, 122, 255, 0.32);
-            border-color: rgba(255, 255, 255, 0.38);
+            box-shadow: 0 16px 42px rgba(0, 0, 0, 0.26), 0 0 38px rgba(31, 111, 214, 0.35);
+            border-color: rgba(255, 255, 255, 0.42);
         }}
 
         .menu::after {{
@@ -390,49 +284,48 @@ def apply_theme(bg_image_b64=None, bg_image_mime="image/jpeg"):
             inset: 0;
             border-radius: inherit;
             box-shadow:
-                inset 2px 2px 5px -2px rgba(255, 255, 255, 0.45),
-                inset -2px -2px 5px 2px rgba(255, 255, 255, 0.3),
-                inset 0 -2px 0 rgba(255, 255, 255, 0.2);
+                inset 1px 1px 3px rgba(255, 255, 255, 0.4),
+                inset -1px -1px 3px rgba(255, 255, 255, 0.2);
             pointer-events: none;
             z-index: -1;
         }}
 
         .menu a {{
             display: flex;
-            flex-direction: column;
+            flex-direction: row;
             align-items: center;
+            justify-content: center;
+            gap: 10px;
             flex: 1 1 0;
             min-width: 0;
             color: rgba(255, 255, 255, 0.92);
             text-decoration: none !important;
-            padding: 9px 8px;
-            border-radius: 999rem;
+            padding: 10px 22px;
+            border-radius: 999px;
+            white-space: nowrap;
             -webkit-tap-highlight-color: transparent;
             transition:
-                background 0.18s var(--ease-spring),
-                color 0.18s var(--ease-spring),
-                transform 0.18s var(--ease-spring),
-                box-shadow 0.3s ease-in-out;
+                background 0.2s ease,
+                color 0.2s ease,
+                transform 0.18s ease,
+                box-shadow 0.25s ease;
             cursor: pointer;
             user-select: none;
         }}
 
         .menu a:hover {{
-            background-color: rgba(255, 255, 255, 0.32);
-            box-shadow:
-                inset 2px 2px 5px -2px rgba(255, 255, 255, 0.5),
-                inset -2px -1px 5px 0 rgba(255, 255, 255, 0.4),
-                inset 0 -2px 0 rgba(255, 255, 255, 0.25),
-                0 4px 12px rgba(0, 0, 0, 0.12);
-            transform: rotate(2.2deg) scale(1.02);
+            background-color: rgba(255, 255, 255, 0.18);
+            box-shadow: 0 4px 14px rgba(0, 0, 0, 0.14);
+            transform: translateY(-1px);
             color: #ffffff;
         }}
 
         .menu a svg {{
-            width: 1.35rem;
-            height: 1.35rem;
-            font-size: 1.35rem;
+            width: 1.25rem;
+            height: 1.25rem;
+            font-size: 1.25rem;
             stroke: currentColor;
+            flex-shrink: 0;
             transition: transform 0.2s ease;
         }}
 
@@ -441,26 +334,231 @@ def apply_theme(bg_image_b64=None, bg_image_mime="image/jpeg"):
         }}
 
         .menu a span {{
-            font-size: 0.82rem;
+            font-size: 0.92rem;
             font-weight: 600;
-            line-height: 1;
-            margin-top: 5px;
+            line-height: 1.2;
+            margin-top: 0;
             letter-spacing: 0.2px;
+            white-space: nowrap;
         }}
 
         .menu a.active {{
-            background: rgba(248, 250, 253, 0.95);
-            color: #0066d6 !important;
-            box-shadow: 0 4px 16px rgba(0, 50, 130, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.9);
+            background: #ffffff;
+            color: #144f9e !important;
+            box-shadow: 0 6px 20px rgba(0, 40, 110, 0.28), inset 0 1px 1px rgba(255, 255, 255, 0.9);
             font-weight: 700;
         }}
 
         .menu a.active svg {{
-            stroke: #0066d6;
+            stroke: #144f9e;
         }}
 
         .menu a:active {{
-            transform: scale(0.96);
+            transform: scale(0.97);
+        }}
+
+        @media (max-width: 860px) {{
+            .menu {{
+                width: calc(100% - 16px);
+                max-width: 100%;
+                gap: 6px;
+                padding: 6px 8px;
+            }}
+            .menu a {{
+                padding: 8px 12px;
+                gap: 6px;
+            }}
+            .menu a span {{
+                font-size: 0.82rem;
+            }}
+            .menu a svg {{
+                width: 1.1rem;
+                height: 1.1rem;
+            }}
+        }}
+
+        /* ---------- En-tête Institutionnel Officiel (Style data.gouv.fr / DSFR) ---------- */
+        .dsfr-header-container {{
+            width: 100%;
+            background: rgba(255, 255, 255, 0.96);
+            border-bottom: 2px solid rgba(28, 43, 56, 0.08);
+            border-radius: 18px;
+            padding: 0.9rem 1.6rem;
+            margin-top: 0.4rem;
+            margin-bottom: 1.2rem;
+            box-shadow: 0 4px 22px rgba(16, 35, 49, 0.06);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 1.5rem;
+            position: relative;
+            z-index: 50;
+            backdrop-filter: blur(14px);
+            -webkit-backdrop-filter: blur(14px);
+            border: 1px solid rgba(28, 43, 56, 0.07);
+        }}
+
+        .dsfr-header-left {{
+            display: flex;
+            align-items: center;
+            gap: 1.5rem;
+            flex-wrap: wrap;
+        }}
+
+        /* Bloc Marque République Tunisienne (exact style Marianne data.gouv.fr) */
+        .marianne-brand-block {{
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+            user-select: none;
+            padding-right: 0.2rem;
+        }}
+
+        .marianne-flag-box {{
+            display: inline-flex;
+            align-items: center;
+            margin-bottom: 2px;
+        }}
+
+        .marianne-flag-img {{
+            width: 38px;
+            height: 25px;
+            object-fit: cover;
+            border-radius: 3px;
+            box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
+            border: 1px solid rgba(0, 0, 0, 0.1);
+        }}
+
+        .marianne-title {{
+            font-family: "Inter", -apple-system, BlinkMacSystemFont, sans-serif;
+            font-weight: 800;
+            font-size: 0.74rem;
+            line-height: 1.15;
+            letter-spacing: 0.2px;
+            color: #121820;
+            text-transform: uppercase;
+        }}
+
+        .marianne-motto {{
+            font-family: "Fraunces", Georgia, serif;
+            font-size: 0.63rem;
+            font-style: italic;
+            line-height: 1.25;
+            color: #5c6873;
+            margin-top: 1px;
+        }}
+
+        /* Trait de séparation vertical */
+        .dsfr-divider {{
+            width: 1.5px;
+            height: 56px;
+            background: linear-gradient(180deg, transparent 0%, rgba(28, 43, 56, 0.18) 15%, rgba(28, 43, 56, 0.18) 85%, transparent 100%);
+            flex-shrink: 0;
+        }}
+
+        /* Bloc Service DGRE (style datagouv avec logo) */
+        .dgre-brand-block {{
+            display: flex;
+            align-items: center;
+            gap: 1.1rem;
+        }}
+
+        .dgre-logo-img {{
+            height: 56px;
+            width: auto;
+            max-width: 95px;
+            object-fit: contain;
+            filter: drop-shadow(0 2px 5px rgba(0,0,0,0.06));
+        }}
+
+        .dgre-title-group {{
+            display: flex;
+            flex-direction: column;
+        }}
+
+        .dgre-wordmark {{
+            font-family: "Inter", -apple-system, BlinkMacSystemFont, sans-serif;
+            font-weight: 800;
+            font-size: 1.95rem;
+            line-height: 1.05;
+            letter-spacing: -0.03em;
+            color: #000091; /* Bleu Marianne data.gouv.fr */
+        }}
+
+        .dgre-wordmark span.accent {{
+            color: #1f6fd6;
+        }}
+
+        .dgre-entity {{
+            font-size: 0.84rem;
+            font-weight: 600;
+            color: #243342;
+            margin-top: 3px;
+            letter-spacing: -0.01em;
+        }}
+
+        .dgre-ministry {{
+            font-size: 0.72rem;
+            font-weight: 500;
+            color: #6d7d8b;
+        }}
+
+        /* Badge d'autorité à droite */
+        .dsfr-header-right {{
+            display: flex;
+            flex-direction: column;
+            align-items: flex-end;
+            gap: 0.35rem;
+        }}
+
+        .dsfr-status-tag {{
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            background: #f0fdf4;
+            border: 1px solid #bbf7d0;
+            color: #166534;
+            padding: 0.35rem 0.8rem;
+            border-radius: 999px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            letter-spacing: 0.2px;
+        }}
+
+        .dsfr-status-dot {{
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            background: #22c55e;
+            box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.2);
+            animation: dsfrPulseGreen 2s infinite;
+        }}
+
+        @keyframes dsfrPulseGreen {{
+            0% {{ box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.5); }}
+            70% {{ box-shadow: 0 0 0 6px rgba(34, 197, 94, 0); }}
+            100% {{ box-shadow: 0 0 0 0 rgba(34, 197, 94, 0); }}
+        }}
+
+        .dsfr-portal-name {{
+            font-size: 0.73rem;
+            color: #5c6873;
+            font-weight: 500;
+        }}
+
+        @media (max-width: 900px) {{
+            .dsfr-header-container {{
+                flex-direction: column;
+                align-items: flex-start;
+                padding: 0.8rem 1rem;
+            }}
+            .dsfr-header-right {{
+                align-items: flex-start;
+                margin-top: 0.3rem;
+            }}
+            .dsfr-divider {{
+                display: none;
+            }}
         }}
 
 
@@ -696,18 +794,34 @@ def apply_theme(bg_image_b64=None, bg_image_mime="image/jpeg"):
         .section-title svg {{ color: {COLOR_PRIMARY}; }}
 
         /* ---------- Boutons ---------- */
-        .stButton > button, .stDownloadButton > button {{
+        .stButton > button,
+        .stDownloadButton > button,
+        div[data-testid="stDownloadButton"] button {{
             position: relative;
             overflow: hidden;
-            background: linear-gradient(135deg, {COLOR_PRIMARY} 0%, {COLOR_PRIMARY_DARK} 100%);
-            color: #ffffff;
-            border: none;
-            border-radius: 999px;
-            font-weight: 600;
-            transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.2s ease;
-            box-shadow: 0 10px 24px rgba(31,111,214,0.28);
+            background: linear-gradient(135deg, {COLOR_PRIMARY} 0%, {COLOR_PRIMARY_DARK} 100%) !important;
+            color: #ffffff !important;
+            border: 1px solid rgba(255, 255, 255, 0.22) !important;
+            border-radius: 12px !important;
+            font-weight: 600 !important;
+            font-size: 0.93rem !important;
+            padding: 0.6rem 1.3rem !important;
+            transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.2s ease !important;
+            box-shadow: 0 6px 20px rgba(31,111,214,0.35) !important;
+            display: inline-flex !important;
+            align-items: center !important;
+            gap: 0.5rem !important;
+            margin-top: 0.4rem !important;
         }}
-        .stButton > button::before, .stDownloadButton > button::before {{
+        .stButton > button *,
+        .stDownloadButton > button *,
+        div[data-testid="stDownloadButton"] button * {{
+            color: #ffffff !important;
+            font-weight: 600 !important;
+        }}
+        .stButton > button::before,
+        .stDownloadButton > button::before,
+        div[data-testid="stDownloadButton"] button::before {{
             content: "";
             position: absolute;
             top: 0;
@@ -719,18 +833,25 @@ def apply_theme(bg_image_b64=None, bg_image_mime="image/jpeg"):
             transition: left 0.65s cubic-bezier(0.16, 1, 0.3, 1);
             pointer-events: none;
         }}
-        .stButton > button:hover::before, .stDownloadButton > button:hover::before {{
+        .stButton > button:hover::before,
+        .stDownloadButton > button:hover::before,
+        div[data-testid="stDownloadButton"] button:hover::before {{
             left: 130%;
         }}
-        .stButton > button:hover, .stDownloadButton > button:hover {{
-            background: linear-gradient(135deg, {COLOR_TERRACOTTA} 0%, {COLOR_OCRE} 100%);
-            color: #ffffff;
-            transform: translateY(-1px);
-            box-shadow: 0 14px 30px rgba(193,103,59,0.3);
+        .stButton > button:hover,
+        .stDownloadButton > button:hover,
+        div[data-testid="stDownloadButton"] button:hover {{
+            background: linear-gradient(135deg, {COLOR_TERRACOTTA} 0%, {COLOR_OCRE} 100%) !important;
+            color: #ffffff !important;
+            border-color: rgba(255, 255, 255, 0.35) !important;
+            transform: translateY(-2px) !important;
+            box-shadow: 0 10px 26px rgba(193,103,59,0.42) !important;
         }}
-        .stButton > button:focus-visible, .stDownloadButton > button:focus-visible {{
-            outline: 3px solid rgba(31,111,214,0.35);
-            outline-offset: 2px;
+        .stButton > button:focus-visible,
+        .stDownloadButton > button:focus-visible,
+        div[data-testid="stDownloadButton"] button:focus-visible {{
+            outline: 3px solid rgba(31,111,214,0.4) !important;
+            outline-offset: 2px !important;
         }}
 
         /* ---------- Bouton d'import : tres visible, grand, dedie ---------- */
@@ -774,14 +895,62 @@ def apply_theme(bg_image_b64=None, bg_image_mime="image/jpeg"):
         }}
         .import-panel-title svg {{ color: {COLOR_PRIMARY}; }}
 
-        /* ---------- Chat & inputs ---------- */
+        /* ---------- Chat & inputs (Adaptation Uiverse.io & Haute Visibilité) ---------- */
         [data-testid="stChatMessage"] {{
-            border-radius: 18px;
+            border-radius: 18px !important;
+            padding: 1.15rem 1.4rem !important;
+            margin-bottom: 1.1rem !important;
+            backdrop-filter: blur(14px) !important;
+            -webkit-backdrop-filter: blur(14px) !important;
+            box-shadow: 0 8px 24px rgba(15, 23, 42, 0.18) !important;
+            border: 1px solid rgba(255, 255, 255, 0.12) !important;
         }}
 
+        /* Bulle Assistant : Carte sombre style console/cockpit avec texte 100% lisible */
+        [data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarAssistant"]),
+        div[data-testid="stChatMessage"]:nth-child(odd) {{
+            background: linear-gradient(145deg, rgba(16, 35, 49, 0.94) 0%, rgba(24, 48, 68, 0.97) 100%) !important;
+            border-left: 4px solid #1f6fd6 !important;
+            border-top: 1px solid rgba(255, 255, 255, 0.16) !important;
+        }}
+
+        /* Tous les textes du message Assistant forcés en BLANC ÉCLATANT */
+        [data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarAssistant"]) p,
+        [data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarAssistant"]) span,
+        [data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarAssistant"]) li,
+        [data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarAssistant"]) strong,
+        [data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarAssistant"]) em,
+        [data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarAssistant"]) div,
+        div[data-testid="stChatMessage"]:nth-child(odd) p,
+        div[data-testid="stChatMessage"]:nth-child(odd) span,
+        div[data-testid="stChatMessage"]:nth-child(odd) div {{
+            color: #f8fafc !important;
+            line-height: 1.65 !important;
+            font-size: 0.96rem !important;
+        }}
+
+        /* Bulle Utilisateur : Teinte bleue semi-transparente élégante */
+        [data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarUser"]),
+        div[data-testid="stChatMessage"]:nth-child(even) {{
+            background: linear-gradient(135deg, rgba(31, 111, 214, 0.18) 0%, rgba(20, 79, 158, 0.28) 100%) !important;
+            border-right: 4px solid #159895 !important;
+            border: 1px solid rgba(31, 111, 214, 0.4) !important;
+        }}
+
+        [data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarUser"]) p,
+        [data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarUser"]) span,
+        [data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarUser"]) div,
+        div[data-testid="stChatMessage"]:nth-child(even) p,
+        div[data-testid="stChatMessage"]:nth-child(even) span {{
+            color: #0f172a !important;
+            font-weight: 500 !important;
+            line-height: 1.6 !important;
+            font-size: 0.96rem !important;
+        }}
+
+        /* Conteneurs flottants d'input en bas de page */
         [data-testid="stBottom"],
         [data-testid="stBottom"] > div,
-        [data-testid="stBottomBlockContainer"],
         div.stChatFloatingInputContainer {{
             background: transparent !important;
             box-shadow: none !important;
@@ -791,39 +960,344 @@ def apply_theme(bg_image_b64=None, bg_image_mime="image/jpeg"):
         [data-testid="stBottom"] *::before {{
             background: transparent !important;
         }}
-        [data-testid="stChatInput"],
-        [data-testid="stChatInput"] > div,
-        [data-testid="stChatInput"] textarea,
-        [data-testid="stChatInput"] [data-baseweb="textarea"],
-        [data-testid="stChatInput"] [data-baseweb="base-input"] {{
-            background: var(--card-bg-strong) !important;
-            border: 1px solid var(--card-border) !important;
-            backdrop-filter: blur(14px) saturate(150%);
-            -webkit-backdrop-filter: blur(14px) saturate(150%);
-            box-shadow: var(--card-shadow) !important;
-            border-radius: 18px !important;
+
+        [data-testid="stBottomBlockContainer"] {{
+            background: transparent !important;
+            padding-bottom: 1.4rem !important;
+            max-width: 960px !important;
+            margin: 0 auto !important;
         }}
+
+        /* Conteneur Chat Input (exact style Uiverse .container-chat-options) */
+        [data-testid="stChatInput"] {{
+            position: relative !important;
+            display: flex !important;
+            background: linear-gradient(
+                to bottom right,
+                #7e7e7e,
+                #363636,
+                #282828,
+                #1e293b,
+                #1e293b
+            ) !important;
+            border-radius: 20px !important;
+            padding: 2px !important;
+            overflow: hidden !important;
+            box-shadow: 0 12px 34px rgba(0, 0, 0, 0.35), 0 0 24px rgba(31, 111, 214, 0.2) !important;
+        }}
+
+        /* Reflet radial dans l'angle (Uiverse ::after) */
+        [data-testid="stChatInput"]::after {{
+            position: absolute !important;
+            content: "" !important;
+            top: -10px !important;
+            left: -10px !important;
+            background: radial-gradient(
+                ellipse at center,
+                #ffffff,
+                rgba(255, 255, 255, 0.35),
+                rgba(255, 255, 255, 0.1),
+                rgba(0, 0, 0, 0) 70%
+            ) !important;
+            width: 45px !important;
+            height: 45px !important;
+            filter: blur(1px) !important;
+            pointer-events: none !important;
+            z-index: 10 !important;
+        }}
+
+        /* Boîte intérieure (Uiverse .chat) */
+        [data-testid="stChatInput"] > div,
+        [data-testid="stChatInput"] [data-baseweb="base-input"] {{
+            background: rgba(10, 16, 26, 0.88) !important;
+            border-radius: 18px !important;
+            width: 100% !important;
+            backdrop-filter: blur(16px) !important;
+            -webkit-backdrop-filter: blur(16px) !important;
+            border: 1px solid rgba(255, 255, 255, 0.08) !important;
+            padding: 4px 10px !important;
+            display: flex !important;
+            align-items: center !important;
+        }}
+
+        /* Zone de texte (Uiverse textarea) */
         [data-testid="stChatInput"] textarea {{
-            color: {COLOR_TEXT} !important;
+            background: transparent !important;
+            color: #ffffff !important;
+            font-family: "Inter", -apple-system, sans-serif !important;
+            font-size: 0.95rem !important;
+            font-weight: 400 !important;
+            padding: 10px 14px !important;
+            resize: none !important;
+            outline: none !important;
+            border: none !important;
             box-shadow: none !important;
         }}
-        [data-testid="stChatInput"] *:focus,
-        [data-testid="stChatInput"] *:focus-within,
-        [data-testid="stChatInput"] [data-baseweb="base-input"]:focus-within {{
-            border-color: rgba(31,111,214,0.55) !important;
-            box-shadow: 0 0 0 2px rgba(31,111,214,0.25) !important;
-            outline: none !important;
+
+        [data-testid="stChatInput"] textarea::placeholder {{
+            color: #cbd5e1 !important;
+            opacity: 0.85 !important;
+            transition: all 0.3s ease !important;
         }}
-        [data-testid="stBottomBlockContainer"] {{
-            padding-bottom: 1.2rem;
+
+        [data-testid="stChatInput"] textarea:focus::placeholder {{
+            color: #475569 !important;
+        }}
+
+        /* Bouton d'envoi (Uiverse .btn-submit) */
+        [data-testid="stChatInput"] button,
+        [data-testid="stChatInputSubmitButton"] button {{
+            display: flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            padding: 2px !important;
+            background-image: linear-gradient(to top, #144f9e, #1f6fd6, #3b82f6) !important;
+            border-radius: 12px !important;
+            box-shadow: inset 0 4px 2px -2px rgba(255, 255, 255, 0.6), 0 4px 14px rgba(31, 111, 214, 0.4) !important;
+            cursor: pointer !important;
+            border: none !important;
+            outline: none !important;
+            transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1) !important;
+            width: 36px !important;
+            height: 36px !important;
+        }}
+
+        [data-testid="stChatInput"] button:hover,
+        [data-testid="stChatInputSubmitButton"] button:hover {{
+            transform: scale(1.08) !important;
+            background-image: linear-gradient(to top, #1d4ed8, #2563eb, #60a5fa) !important;
+            box-shadow: inset 0 4px 2px -2px rgba(255, 255, 255, 0.8), 0 0 18px rgba(37, 99, 235, 0.6) !important;
+        }}
+
+        [data-testid="stChatInput"] button:hover svg,
+        [data-testid="stChatInputSubmitButton"] button:hover svg {{
+            color: #ffffff !important;
+            filter: drop-shadow(0 0 6px #ffffff) !important;
+        }}
+
+        [data-testid="stChatInput"] button:active,
+        [data-testid="stChatInputSubmitButton"] button:active {{
+            transform: scale(0.92) !important;
+        }}
+
+        [data-testid="stChatInput"] button svg,
+        [data-testid="stChatInputSubmitButton"] button svg {{
+            color: #f3f6fd !important;
+            width: 17px !important;
+            height: 17px !important;
+            transition: all 0.3s ease !important;
+        }}
+
+        /* Tags de suggestions (Uiverse .tags span) */
+        .chat-tags-wrapper .stButton > button {{
+            background: #1b1b1b !important;
+            border: 1.5px solid #363636 !important;
+            border-radius: 12px !important;
+            color: #ffffff !important;
+            font-size: 0.84rem !important;
+            font-weight: 500 !important;
+            padding: 8px 14px !important;
+            min-height: auto !important;
+            box-shadow: 0 3px 10px rgba(0, 0, 0, 0.2) !important;
+            transition: all 0.25s ease !important;
+        }}
+
+        .chat-tags-wrapper .stButton > button:hover {{
+            background: #262626 !important;
+            border-color: #1f6fd6 !important;
+            color: #60a5fa !important;
+            transform: translateY(-3px) !important;
+            box-shadow: 0 6px 18px rgba(31, 111, 214, 0.35) !important;
         }}
 
         [data-testid="stDataFrame"] {{
             border-radius: 16px;
             overflow: hidden;
+            box-shadow: 0 4px 20px rgba(16, 35, 49, 0.06);
+            border: 1px solid rgba(28, 43, 56, 0.08);
         }}
         [data-testid="stExpander"] {{
             border-radius: 16px;
+        }}
+        [data-testid="stPlot"],
+        [data-testid="stImage"] img {{
+            border-radius: 16px !important;
+            box-shadow: 0 4px 20px rgba(16, 35, 49, 0.06) !important;
+            border: 1px solid rgba(28, 43, 56, 0.08) !important;
+        }}
+
+        /* ---------- Tableau Haute Lisibilité des Crues (Dashboard) ---------- */
+        .crue-card-container {{
+            width: 100%;
+            background: #ffffff;
+            border-radius: 16px;
+            box-shadow: 0 4px 20px rgba(16, 35, 49, 0.06);
+            border: 1px solid rgba(28, 43, 56, 0.08);
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            margin-bottom: 1rem;
+        }}
+
+        .crue-scroll-wrapper {{
+            width: 100%;
+            max-height: 380px;
+            overflow-y: auto;
+            scrollbar-width: thin;
+            scrollbar-color: #cbd5e1 transparent;
+        }}
+
+        .crue-scroll-wrapper::-webkit-scrollbar {{
+            width: 6px;
+        }}
+
+        .crue-scroll-wrapper::-webkit-scrollbar-track {{
+            background: transparent;
+        }}
+
+        .crue-scroll-wrapper::-webkit-scrollbar-thumb {{
+            background-color: #cbd5e1;
+            border-radius: 6px;
+        }}
+
+        .crue-custom-table {{
+            width: 100%;
+            border-collapse: collapse;
+            font-family: "Inter", -apple-system, BlinkMacSystemFont, sans-serif;
+            text-align: left;
+        }}
+
+        .crue-custom-table thead {{
+            position: sticky;
+            top: 0;
+            z-index: 5;
+            background: linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%);
+            border-bottom: 1.5px solid #e2e8f0;
+        }}
+
+        .crue-custom-table th {{
+            padding: 12px 14px;
+            font-size: 0.74rem;
+            font-weight: 700;
+            color: #475569;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            white-space: nowrap;
+        }}
+
+        .crue-th-station {{
+            text-align: left;
+            padding-left: 18px !important;
+        }}
+
+        .crue-th-center {{
+            text-align: center;
+        }}
+
+        .crue-th-right {{
+            text-align: right;
+            padding-right: 18px !important;
+        }}
+
+        .crue-custom-table tbody tr {{
+            border-bottom: 1px solid #f1f5f9;
+            transition: background 0.15s ease;
+        }}
+
+        .crue-custom-table tbody tr:last-child {{
+            border-bottom: none;
+        }}
+
+        .crue-custom-table tbody tr:hover {{
+            background: #f8fafc;
+        }}
+
+        .crue-custom-table td {{
+            padding: 11px 14px;
+            vertical-align: middle;
+        }}
+
+        .crue-td-station {{
+            text-align: left;
+            padding-left: 18px !important;
+        }}
+
+        .crue-station-name {{
+            font-weight: 700;
+            color: #0f172a;
+            font-size: 0.88rem;
+            display: block;
+        }}
+
+        .crue-td-center {{
+            text-align: center;
+        }}
+
+        .crue-gouv-badge {{
+            display: inline-block;
+            padding: 2.5px 8px;
+            border-radius: 6px;
+            font-size: 0.74rem;
+            font-weight: 700;
+            background: rgba(31, 111, 214, 0.08);
+            color: #1e40af;
+            border: 1px solid rgba(31, 111, 214, 0.18);
+            letter-spacing: 0.3px;
+        }}
+
+        .crue-annee-pill {{
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 6px;
+            font-size: 0.76rem;
+            font-weight: 600;
+            background: #f1f5f9;
+            color: #334155;
+            border: 1px solid #e2e8f0;
+        }}
+
+        .crue-td-right {{
+            text-align: right;
+            padding-right: 18px !important;
+        }}
+
+        .crue-debit-badge {{
+            display: inline-flex;
+            align-items: baseline;
+            gap: 3px;
+            padding: 3px 10px;
+            border-radius: 8px;
+            font-size: 0.88rem;
+            font-weight: 700;
+            white-space: nowrap;
+        }}
+
+        .crue-unit {{
+            font-size: 0.7rem;
+            font-weight: 600;
+            opacity: 0.8;
+        }}
+
+        /* Crue record / exceptionnelle (> 650 m³/s) */
+        .debit-badge-extreme {{
+            background: #fef2f2;
+            color: #dc2626;
+            border: 1px solid #fecaca;
+            box-shadow: 0 1px 4px rgba(220, 38, 38, 0.08);
+        }}
+
+        /* Crue majeure (> 500 m³/s) */
+        .debit-badge-high {{
+            background: #fff7ed;
+            color: #c2410c;
+            border: 1px solid #fed7aa;
+        }}
+
+        /* Crue standard */
+        .debit-badge-normal {{
+            background: #eff6ff;
+            color: #1d4ed8;
+            border: 1px solid #bfdbfe;
         }}
 
         /* ---------- Ticker (bandeau vivant) ---------- */
@@ -1044,3 +1518,76 @@ def render_sidebar_stars():
         """,
         unsafe_allow_html=True,
     )
+
+
+@st.cache_resource(show_spinner=False)
+def _institutional_assets():
+    import os
+    import base64
+    racine = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    data_dir = os.path.join(racine, "data")
+
+    # Logo DGRE officiel (transparent de preference, sinon normal)
+    p_dgre_trans = os.path.join(data_dir, "logo_dgre_transparent.png")
+    p_dgre = os.path.join(data_dir, "logo_dgre.png")
+    dgre_b64 = None
+    target_dgre = p_dgre_trans if os.path.exists(p_dgre_trans) else (p_dgre if os.path.exists(p_dgre) else None)
+    if target_dgre:
+        with open(target_dgre, "rb") as f:
+            dgre_b64 = base64.b64encode(f.read()).decode("ascii")
+
+    # Drapeau de la Tunisie
+    p_flag = os.path.join(data_dir, "drapeau_tunisie.png")
+    flag_b64 = None
+    if os.path.exists(p_flag):
+        with open(p_flag, "rb") as f:
+            flag_b64 = base64.b64encode(f.read()).decode("ascii")
+
+    return dgre_b64, flag_b64
+
+
+def render_institutional_header():
+    """Affiche le bandeau institutionnel officiel (Drapeau Tunisie + Logo DGRE)
+    dans le style exact du bloc-marque officiel data.gouv.fr / DSFR."""
+    dgre_b64, flag_b64 = _institutional_assets()
+
+    flag_html = (
+        f'<img src="data:image/png;base64,{flag_b64}" alt="Drapeau de la République Tunisienne" class="marianne-flag-img" />'
+        if flag_b64 else
+        '<svg class="marianne-flag-img" viewBox="0 0 120 80"><rect width="120" height="80" fill="#E70013"/><circle cx="60" cy="40" r="20" fill="#fff"/><circle cx="60" cy="40" r="16" fill="#E70013"/><circle cx="64" cy="40" r="13" fill="#fff"/><polygon points="61.5,33.5 63,38 67.5,38 64,41 65.5,45.5 61.5,43 57.5,45.5 59,41 55.5,38 60,38" fill="#E70013"/></svg>'
+    )
+
+    dgre_html = (
+        f'<img src="data:image/png;base64,{dgre_b64}" alt="Logo DGRE Tunisie" class="dgre-logo-img" />'
+        if dgre_b64 else
+        icon_svg("droplet", 46, color="#000091")
+    )
+
+    html = (
+        '<div class="dsfr-header-container">'
+        '<div class="dsfr-header-left">'
+        '<div class="marianne-brand-block">'
+        f'<div class="marianne-flag-box">{flag_html}</div>'
+        '<div class="marianne-title">RÉPUBLIQUE<br>TUNISIENNE</div>'
+        '<div class="marianne-motto">Liberté · Ordre · Justice</div>'
+        '</div>'
+        '<div class="dsfr-divider"></div>'
+        '<div class="dgre-brand-block">'
+        f'{dgre_html}'
+        '<div class="dgre-title-group">'
+        '<div class="dgre-wordmark">dgre<span class="accent">eau</span></div>'
+        '<div class="dgre-entity">Direction Générale des Ressources en Eau</div>'
+        '<div class="dgre-ministry">Ministère de l\'Agriculture, des Ressources Hydrauliques et de la Pêche</div>'
+        '</div>'
+        '</div>'
+        '</div>'
+        '<div class="dsfr-header-right">'
+        '<div class="dsfr-status-tag"><span class="dsfr-status-dot"></span><span>Plateforme Officielle</span></div>'
+        '<div class="dsfr-portal-name">Annuaire Hydrométrique National</div>'
+        '</div>'
+        '</div>'
+    )
+    if hasattr(st, "html"):
+        st.html(html)
+    else:
+        st.markdown(html, unsafe_allow_html=True)
