@@ -256,19 +256,19 @@ def apply_theme(bg_image_b64=None, bg_image_mime="image/jpeg"):
 
         .menu {{
             position: relative;
-            width: min(920px, calc(100% - 32px));
-            max-width: 920px;
+            width: min(980px, calc(100% - 24px));
+            max-width: 980px;
             backdrop-filter: blur(18px) saturate(180%) contrast(140%);
             -webkit-backdrop-filter: blur(18px) saturate(180%) contrast(140%);
-            background: rgba(16, 43, 70, 0.65);
+            background: rgba(16, 43, 70, 0.68);
             border: 1px solid rgba(255, 255, 255, 0.28);
             box-shadow: 0 12px 36px rgba(0, 0, 0, 0.20), 0 0 28px rgba(31, 111, 214, 0.25);
-            padding: 8px 12px;
+            padding: 8px 10px;
             border-radius: 999px;
             display: flex;
             justify-content: space-between;
             align-items: center;
-            gap: 12px;
+            gap: 8px;
             pointer-events: auto;
             transition: box-shadow 0.3s ease, border-color 0.3s ease, width 0.3s ease;
         }}
@@ -295,12 +295,12 @@ def apply_theme(bg_image_b64=None, bg_image_mime="image/jpeg"):
             flex-direction: row;
             align-items: center;
             justify-content: center;
-            gap: 10px;
+            gap: 7px;
             flex: 1 1 0;
             min-width: 0;
             color: rgba(255, 255, 255, 0.92);
             text-decoration: none !important;
-            padding: 10px 22px;
+            padding: 9px 14px;
             border-radius: 999px;
             white-space: nowrap;
             -webkit-tap-highlight-color: transparent;
@@ -334,7 +334,7 @@ def apply_theme(bg_image_b64=None, bg_image_mime="image/jpeg"):
         }}
 
         .menu a span {{
-            font-size: 0.92rem;
+            font-size: 0.90rem;
             font-weight: 600;
             line-height: 1.2;
             margin-top: 0;
@@ -357,24 +357,166 @@ def apply_theme(bg_image_b64=None, bg_image_mime="image/jpeg"):
             transform: scale(0.97);
         }}
 
+        .menu-badge {{
+            background: linear-gradient(135deg, #0284c7, #2563eb);
+            color: #ffffff;
+            font-size: 0.70rem;
+            font-weight: 700;
+            padding: 2px 7px;
+            border-radius: 999px;
+            line-height: 1.2;
+            letter-spacing: 0;
+            box-shadow: 0 2px 8px rgba(2, 132, 199, 0.45);
+            border: 1px solid rgba(255, 255, 255, 0.4);
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+        }}
+
+        .menu a.active .menu-badge {{
+            background: #144f9e;
+            color: #ffffff;
+            box-shadow: 0 2px 6px rgba(20, 79, 158, 0.3);
+            border-color: rgba(20, 79, 158, 0.2);
+        }}
+
         @media (max-width: 860px) {{
             .menu {{
-                width: calc(100% - 16px);
+                width: calc(100% - 12px);
                 max-width: 100%;
-                gap: 6px;
-                padding: 6px 8px;
+                gap: 4px;
+                padding: 5px 6px;
             }}
             .menu a {{
-                padding: 8px 12px;
-                gap: 6px;
+                padding: 6px 8px;
+                gap: 4px;
             }}
             .menu a span {{
-                font-size: 0.82rem;
+                font-size: 0.76rem;
             }}
             .menu a svg {{
-                width: 1.1rem;
-                height: 1.1rem;
+                width: 1rem;
+                height: 1rem;
             }}
+            .menu-badge {{
+                font-size: 0.65rem;
+                padding: 1px 5px;
+            }}
+        }}
+
+        /* ---------- Bandeau et cartes Annuaires PDF ---------- */
+        .annuaires-quick-bar {{
+            background: rgba(255, 255, 255, 0.94);
+            border: 1px solid rgba(31, 111, 214, 0.22);
+            border-radius: 14px;
+            padding: 0.75rem 1.2rem;
+            margin: 0.3rem 0 1.1rem 0;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 1rem;
+            box-shadow: 0 4px 18px rgba(16, 43, 70, 0.06);
+            backdrop-filter: blur(12px);
+        }}
+        .annuaires-quick-info {{
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            font-size: 0.88rem;
+            color: #1c2b38;
+        }}
+        .annuaires-quick-badge {{
+            background: linear-gradient(135deg, #0284c7, #1d4ed8);
+            color: #ffffff;
+            font-size: 0.72rem;
+            font-weight: 700;
+            padding: 3px 8px;
+            border-radius: 6px;
+            letter-spacing: 0.3px;
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+        }}
+        .annuaires-quick-link {{
+            color: #1f6fd6 !important;
+            font-weight: 600;
+            text-decoration: none !important;
+            font-size: 0.88rem;
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            transition: color 0.2s, transform 0.2s;
+            white-space: nowrap;
+        }}
+        .annuaires-quick-link:hover {{
+            color: #144f9e !important;
+            transform: translateX(3px);
+        }}
+
+        .annuaire-pdf-card {{
+            background: rgba(255, 255, 255, 0.96);
+            border: 1px solid rgba(28, 43, 56, 0.10);
+            border-radius: 16px;
+            padding: 1.25rem 1.4rem;
+            box-shadow: 0 4px 16px rgba(16, 35, 49, 0.05);
+            transition: transform 0.25s ease, box-shadow 0.25s ease, border-color 0.25s ease;
+            position: relative;
+            overflow: hidden;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+        }}
+        .annuaire-pdf-card:hover {{
+            transform: translateY(-3px);
+            box-shadow: 0 10px 28px rgba(16, 35, 49, 0.10);
+            border-color: rgba(31, 111, 214, 0.35);
+        }}
+        .annuaire-pdf-card::before {{
+            content: "";
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background: linear-gradient(90deg, #1f6fd6, #0ea5e9);
+        }}
+        .annuaire-card-header {{
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 0.75rem;
+        }}
+        .annuaire-tag {{
+            background: #eff6ff;
+            color: #1d4ed8;
+            border: 1px solid #bfdbfe;
+            padding: 2px 8px;
+            border-radius: 999px;
+            font-size: 0.72rem;
+            font-weight: 700;
+            letter-spacing: 0.2px;
+        }}
+        .annuaire-title {{
+            font-family: 'Fraunces', serif;
+            font-size: 1.22rem;
+            font-weight: 700;
+            color: #1c2b38;
+            margin-bottom: 0.6rem;
+            line-height: 1.3;
+        }}
+        .annuaire-meta {{
+            display: flex;
+            flex-direction: column;
+            gap: 0.35rem;
+            font-size: 0.82rem;
+            color: #61727d;
+            margin-bottom: 1.1rem;
+        }}
+        .annuaire-meta-row {{
+            display: flex;
+            align-items: center;
+            gap: 6px;
         }}
 
         /* ---------- En-tête Institutionnel Officiel (Style data.gouv.fr / DSFR) ---------- */
@@ -1440,13 +1582,15 @@ def alert_ticker(items):
     )
 
 
-def render_floating_nav(active_page: str):
+def render_floating_nav(active_page: str, nb_annuaires: int = 0):
     """Affiche la barre de navigation flottante glassmorphic (Uiverse.io by mymiamo)."""
     is_dash = (active_page == "Tableau de bord")
     is_chat = (active_page == "Assistant")
+    is_annuaires = (active_page == "Annuaires")
 
     active_dash = "active" if is_dash else ""
     active_chat = "active" if is_chat else ""
+    active_annuaires = "active" if is_annuaires else ""
 
     icon_dashboard = (
         '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
@@ -1466,6 +1610,14 @@ def render_floating_nav(active_page: str):
         '<path d="M8 22h8"></path>'
         '</svg>'
     )
+    icon_annuaires = (
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
+        '<path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>'
+        '<path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>'
+        '<line x1="9" y1="7" x2="15" y2="7"></line>'
+        '<line x1="9" y1="11" x2="15" y2="11"></line>'
+        '</svg>'
+    )
     icon_refresh = (
         '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
         '<path d="M21.5 2v6h-6"></path>'
@@ -1473,7 +1625,14 @@ def render_floating_nav(active_page: str):
         '</svg>'
     )
 
-    current_query = "dashboard" if is_dash else "assistant"
+    badge_html = f'<span class="menu-badge">{nb_annuaires}</span>' if nb_annuaires > 0 else ""
+
+    if is_dash:
+        current_query = "dashboard"
+    elif is_chat:
+        current_query = "assistant"
+    else:
+        current_query = "annuaires"
 
     html = f"""
     <div class="menu-nav-wrapper">
@@ -1485,6 +1644,11 @@ def render_floating_nav(active_page: str):
             <a href="/?page=assistant" target="_self" class="{active_chat}" title="Assistant IA Hydrologique">
                 {icon_assistant}
                 <span>Assistant IA</span>
+            </a>
+            <a href="/?page=annuaires" target="_self" class="{active_annuaires}" title="Consulter et télécharger les annuaires hydrométriques officiels générés">
+                {icon_annuaires}
+                <span>Annuaires PDF</span>
+                {badge_html}
             </a>
             <a href="/?page={current_query}&refresh=1" target="_self" title="Synchroniser et rafraîchir les données">
                 {icon_refresh}

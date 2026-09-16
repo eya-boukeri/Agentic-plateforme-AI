@@ -74,10 +74,23 @@ TESTS_FACTUELS = [
             SELECT s.nom
             FROM statistiques_annuelles st
             JOIN station s ON st.code_station = s.code_station
+            WHERE st.debit_max_jour::text <> 'NaN'
             ORDER BY st.debit_max_jour DESC
             LIMIT 1
         """,
         "colonne_a_comparer": "nom",
+    },
+    {
+        "question": "Quel gouvernorat a le plus grand débit ?",
+        "sql_reference": """
+            SELECT s.gouvernorat
+            FROM statistiques_annuelles st
+            JOIN station s ON st.code_station = s.code_station
+            WHERE st.debit_max_jour::text <> 'NaN' AND s.gouvernorat IS NOT NULL AND s.gouvernorat != ''
+            ORDER BY st.debit_max_jour DESC
+            LIMIT 1
+        """,
+        "colonne_a_comparer": "gouvernorat",
     },
 ]
 

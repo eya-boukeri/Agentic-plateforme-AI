@@ -362,6 +362,23 @@ class AgentOrchestrator:
                 'message': f"Recalcul des statistiques pour {annee}"
             }
 
+        # === INTENTION DE LISTE / CONSULTATION DES ANNUAIRES DÉJÀ GÉNÉRÉS ===
+        mots_consultation = [
+            'déjà généré', 'deja genere', 'déjà générés', 'deja generes',
+            'disponible', 'disponibles', 'existant', 'existants',
+            'liste', 'où trouver', 'ou trouver', 'où sont', 'ou sont', 'ou je trouve', 'où je trouve',
+            'consulter', 'tous les annuaires', 'voir les annuaires', 'archives', 'catalogue'
+        ]
+        demande_annuaire = any(w in input_lower for w in ['annuaire', 'annuaires', 'pdf'])
+        action_generer = any(w in input_lower for w in ['génère', 'genere', 'générer', 'generer', 'crée', 'cree', 'créer', 'creer', 'produire', 'fabrique'])
+        if demande_annuaire and any(m in input_lower for m in mots_consultation) and not action_generer:
+            return {
+                'type': 'liste_annuaires',
+                'subtype': 'catalogue_pdf',
+                'params': {},
+                'message': "Consultation des annuaires hydrométriques déjà générés"
+            }
+
         # === INTENTION DE GÉNÉRATION PDF ===
         generation_keywords = ['génère', 'genere', 'générer', 'generer', 'crée', 'cree', 'creer', 'annuaire', 'pdf']
         if any(kw in input_lower for kw in generation_keywords):
@@ -549,6 +566,10 @@ class AgentOrchestrator:
             print(f"🎯 Intention carte directe : {intent_rapide['subtype']}")
             return self._handle_carte_hydrometrique(intent_rapide['params'])
 
+        if intent_rapide['type'] == 'liste_annuaires':
+            print(f"🎯 Intention consultation annuaires existants : {intent_rapide['subtype']}")
+            return self._handle_liste_annuaires()
+
         if intent_rapide['type'] == 'generation':
             print(f"🎯 Intention génération PDF directe : {intent_rapide['subtype']}")
             return self._handle_generation(intent_rapide)
@@ -660,7 +681,56 @@ class AgentOrchestrator:
             return {'status': 'success', 'type': 'question', 'subtype': 'llm_direct',
                     'message': intent_llm['params']['reponse'], 'answer': intent_llm['params']['reponse']}
 
-        return self._handle_default()
+    def _handle_liste_annuaires(self):
+        """Liste les annuaires PDF déjà générés disponibles au téléchargement."""
+        racine = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        pdf_dir = os.path.join(racine, "output", "pdf")
+        fichiers = []
+        if os.path.exists(pdf_dir):
+            for f in sorted(os.listdir(pdf_dir)):
+                if f.startswith("annuaire_hydrometrique_") and f.endswith(".pdf"):
+                    match = re.search(r'annuaire_hydrometrique_(\d{4})\.pdf', f)
+                    annee = int(match.group(1)) if match else None
+                    chemin = os.path.join(pdf_dir, f)
+                    taille_mo = os.path.getsize(chemin) / (1024 * 1024)
+                    mtime = datetime.fromtimestamp(os.path.getmtime(chemin)).strftime("%d/%m/%Y à %H:%M")
+                    fichiers.append((f, annee, round(taille_mo, 1), mtime, chemin))
+
+        if not fichiers:
+            msg = (
+                "ℹ️ **Aucun annuaire PDF n'a encore été généré sur le serveur.**\n\n"
+                "Pour générer le document officiel d'une année, demandez simplement :\n"
+                "• *« Génère-moi l'annuaire 2019 »*\n"
+                "• *« Crée l'annuaire 2024 »*"
+            )
+            return {'status': 'success', 'type': 'liste_annuaires', 'message': msg, 'answer': msg}
+
+        fichiers.sort(key=lambda x: x[1] or 0, reverse=True)
+        lignes = [
+            f"📚 **{len(fichiers)} annuaire(s) hydrométrique(s) officiel(s) sont déjà générés et prêts au téléchargement :**\n"
+        ]
+        for i, (nom, an, taille, date, ch) in enumerate(fichiers, 1):
+            cycle = f"{an}-{an+1}" if an else nom
+            lignes.append(
+                f"  {i}. **Annuaire Hydrométrique {cycle}** ({taille} Mo)\n"
+                f"     • Fichier : `{nom}`\n"
+                f"     • Date de génération : {date}\n"
+            )
+        lignes.append(
+            "\n💡 *Vous pouvez télécharger ces documents via les boutons ci-dessous ou directement dans l'onglet **« Annuaires PDF »** du menu supérieur.*"
+        )
+        msg = "\n".join(lignes)
+        return {
+            'status': 'success',
+            'type': 'liste_annuaires',
+            'message': msg,
+            'answer': msg,
+            'pdf_path': fichiers[0][4],
+            'pdf_list': [
+                {'nom': f[0], 'annee': f[1], 'taille_mo': f[2], 'date': f[3], 'chemin': f[4]}
+                for f in fichiers
+            ],
+        }
 
     def _handle_generation(self, intent):
         """Gère la génération de l'annuaire PDF"""

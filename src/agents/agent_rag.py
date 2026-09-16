@@ -619,7 +619,14 @@ Requête SQL :
 
         # 4. Station explicite nommée (ex: "station Atlantis", "station Oued El Kébir")
         station_nom_libre = None
-        if 'station' in q and not stations:
+        mots_superlatifs_ou_generiques = [
+            'plus grand', 'plus petit', 'plus fort', 'plus faible', 'plus haut',
+            'maximum', 'maximal', 'max', 'minimum', 'minimal', 'min',
+            'record', 'moyen', 'moyenne', 'combien', 'nombre', 'liste', 'toutes',
+            'tout', 'tous', 'total', 'avec le', 'avec la', 'ayant', 'qui a',
+            'importante', 'important', 'principale', 'principales', 'oued', 'cours d\'eau'
+        ]
+        if 'station' in q and not stations and not any(w in q for w in mots_superlatifs_ou_generiques):
             m_st = re.search(r'station\s+(?:de\s+|du\s+|d\')?([a-zA-Z0-9\s\-]+)', q)
             if m_st:
                 nom_pot = m_st.group(1).strip()
@@ -672,8 +679,81 @@ Requête SQL :
                 ORDER BY c.debit_max_m3s DESC
                 LIMIT 10
             """
-            
-        # --- DÉBITS ET VOLUMES ---
+        # --- 1. GOUVERNORAT AVEC LE PLUS GRAND DÉBIT (MAXIMUM / RECORD) ---
+        # (ex: "Quel gouvernorat a le plus grand débit ?", "gouvernorat au débit maximal")
+        if ('gouvernorat' in q or 'gouv' in q) and any(w in q for w in ['plus grand', 'max', 'maximum', 'record', 'plus fort', 'plus eleve', 'plus élevé', 'superieur', 'fort', 'haut']) and any(w in q for w in ['débit', 'debit']):
+            annee_clause1 = f"AND st.annee = {annee}" if annee else ""
+            annee_clause2 = f"AND st2.annee = {annee}" if annee else ""
+            return f"""
+                SELECT s.gouvernorat, MAX(st.debit_max_jour) as max_debit,
+                       (SELECT s2.nom FROM statistiques_annuelles st2 JOIN station s2 ON st2.code_station = s2.code_station WHERE s2.gouvernorat = s.gouvernorat AND st2.debit_max_jour::text <> 'NaN' {annee_clause2} ORDER BY st2.debit_max_jour DESC NULLS LAST LIMIT 1) as station_max,
+                       (SELECT st2.annee FROM statistiques_annuelles st2 JOIN station s2 ON st2.code_station = s2.code_station WHERE s2.gouvernorat = s.gouvernorat AND st2.debit_max_jour::text <> 'NaN' {annee_clause2} ORDER BY st2.debit_max_jour DESC NULLS LAST LIMIT 1) as annee_max
+                FROM statistiques_annuelles st
+                JOIN station s ON st.code_station = s.code_station
+                WHERE s.gouvernorat IS NOT NULL AND s.gouvernorat != '' AND st.debit_max_jour::text <> 'NaN' {annee_clause1}
+                GROUP BY s.gouvernorat
+                ORDER BY max_debit DESC
+            """
+
+        # --- 2. GOUVERNORAT AVEC LE PLUS GRAND VOLUME D'EAU (MAXIMUM / RECORD) ---
+        # (ex: "Quel gouvernorat a le plus grand volume ?", "gouvernorat avec le plus de volume d'eau")
+        if ('gouvernorat' in q or 'gouv' in q) and any(w in q for w in ['plus grand', 'max', 'maximum', 'record', 'plus fort', 'plus eleve', 'plus élevé', 'plus haut', 'haut']) and any(w in q for w in ['volume', 'hm3']):
+            annee_clause1 = f"AND st.annee = {annee}" if annee else ""
+            annee_clause2 = f"AND st2.annee = {annee}" if annee else ""
+            return f"""
+                SELECT s.gouvernorat, MAX(st.volume_total_hm3) as max_volume,
+                       (SELECT s2.nom FROM statistiques_annuelles st2 JOIN station s2 ON st2.code_station = s2.code_station WHERE s2.gouvernorat = s.gouvernorat AND st2.volume_total_hm3::text <> 'NaN' {annee_clause2} ORDER BY st2.volume_total_hm3 DESC NULLS LAST LIMIT 1) as station_max,
+                       (SELECT st2.annee FROM statistiques_annuelles st2 JOIN station s2 ON st2.code_station = s2.code_station WHERE s2.gouvernorat = s.gouvernorat AND st2.volume_total_hm3::text <> 'NaN' {annee_clause2} ORDER BY st2.volume_total_hm3 DESC NULLS LAST LIMIT 1) as annee_max
+                FROM statistiques_annuelles st
+                JOIN station s ON st.code_station = s.code_station
+                WHERE s.gouvernorat IS NOT NULL AND s.gouvernorat != '' AND st.volume_total_hm3::text <> 'NaN' {annee_clause1}
+                GROUP BY s.gouvernorat
+                ORDER BY max_volume DESC
+            """
+
+        # --- 3. GOUVERNORAT AVEC LE PLUS DE STATIONS / NOMBRE DE STATIONS PAR GOUVERNORAT ---
+        # (ex: "Quel gouvernorat a le plus grand nombre de stations ?", "quel gouvernorat a le plus de stations ?")
+        if ('gouvernorat' in q or 'gouv' in q) and any(w in q for w in ['plus', 'max', 'maximum', 'nombre', 'combien', 'nb']) and any(w in q for w in ['station', 'stations']):
+            return """
+                SELECT gouvernorat, COUNT(*) as nb_stations
+                FROM station
+                WHERE gouvernorat IS NOT NULL AND gouvernorat != ''
+                GROUP BY gouvernorat
+                ORDER BY nb_stations DESC
+            """
+
+        # --- 4. STATION AVEC LE PLUS GRAND DÉBIT (MAXIMUM / RECORD) ---
+        # (ex: "Quelle est la station avec le plus grand débit ?", "station au débit maximal", "quel est le plus grand débit ?")
+        if any(w in q for w in ['plus grand', 'max', 'maximum', 'record', 'plus fort', 'plus eleve', 'plus élevé']) and any(w in q for w in ['débit', 'debit']) and not ('gouvernorat' in q or 'gouv' in q):
+            annee_clause = f"AND st.annee = {annee}" if annee else ""
+            return f"""
+                SELECT s.nom as station, s.gouvernorat, s.cours_eau, st.annee, st.debit_max_jour
+                FROM statistiques_annuelles st
+                JOIN station s ON st.code_station = s.code_station
+                WHERE st.debit_max_jour::text <> 'NaN' {annee_clause}
+                ORDER BY st.debit_max_jour DESC
+                LIMIT 5
+            """
+
+        # --- 5. STATION AVEC LE PLUS GRAND VOLUME (MAXIMUM / RECORD) ---
+        # (ex: "Quelle est la station avec le plus grand volume ?")
+        if any(w in q for w in ['plus grand', 'max', 'maximum', 'record', 'plus fort', 'plus eleve', 'plus élevé']) and any(w in q for w in ['volume', 'hm3']) and not ('gouvernorat' in q or 'gouv' in q):
+            annee_clause = f"AND st.annee = {annee}" if annee else ""
+            return f"""
+                SELECT s.nom as station, s.gouvernorat, s.cours_eau, st.annee, st.volume_total_hm3
+                FROM statistiques_annuelles st
+                JOIN station s ON st.code_station = s.code_station
+                WHERE st.volume_total_hm3::text <> 'NaN' {annee_clause}
+                ORDER BY st.volume_total_hm3 DESC
+                LIMIT 5
+            """
+
+        # --- 6. NOMBRE TOTAL DE STATIONS ---
+        # (ex: "Combien y a-t-il de stations en tout ?", "nombre total de stations")
+        if any(w in q for w in ['combien', 'total', 'nombre total']) and any(w in q for w in ['station', 'stations']) and not ('gouvernorat' in q or 'gouv' in q):
+            return "SELECT COUNT(*) as total_stations FROM station"
+
+        # --- DÉBITS ET VOLUMES GÉNÉRAUX ---
         if any(w in q for w in ['débit', 'debit', 'volume', 'hm3', 'm3/s', 'ecoulement', 'écoulement', 'maximal', 'moyen']):
             if "volume" in q or "hm3" in q:
                 where_clauses = ["st.volume_total_hm3::text <> 'NaN'"]
@@ -754,7 +834,7 @@ Requête SQL :
                 LIMIT 10
             """
 
-        # --- NOMBRE DE STATIONS ---
+        # --- NOMBRE DE STATIONS (REPLI) ---
         if any(w in q for w in ['nombre', 'combien', 'total', 'nb']) and ('station' in q or 'stations' in q):
             if "gouvernorat" in q or "gouv" in q:
                 return """
@@ -1277,6 +1357,7 @@ Ne mentionne pas le terme "score de similarité" directement ou de manière trop
             return "⚠️ Aucune donnée trouvée dans la base hydrométrique pour votre requête."
         
         first = data[0] if isinstance(data, list) and len(data) > 0 else {}
+        q_lower = question.lower().strip()
 
         # 0. Format DÉBITS JOURNALIERS (date spécifique)
         if 'jour' in first:
@@ -1299,12 +1380,10 @@ Ne mentionne pas le terme "score de similarité" directement ou de manière trop
                 debit_info = " | ".join(filter(None, [dmoy_str, dmax_str]))
                 lines.append(f"  {i}. **{st}**{gouv_str} le {jour_str} : {debit_info}")
             return "\n".join(lines)
-        
-        first = data[0] if isinstance(data, list) and len(data) > 0 else {}
-        
+
         # 1. Format CRUES (débits de pointe, crues historiques)
         if any(k in first for k in ['debit_max_m3s', 'date_debut']):
-            lines = [f"🌊 **Crues enregistrées ({len(data)} résultat(s)) :**\n"]
+            lines = [f"🌊 **Principales crues enregistrées ({len(data)} résultat(s)) :**\n"]
             for i, row in enumerate(data, 1):
                 st = row.get('station') or row.get('nom') or 'Station'
                 gouv = row.get('gouvernorat', '')
@@ -1325,7 +1404,139 @@ Ne mentionne pas le terme "score de similarité" directement ou de manière trop
                     lines.append(f"  {i}. **{st}**{gouv_str}{annee_str} : débit de pointe de {debit_str}")
             return "\n".join(lines)
 
-        # 2. Format DÉBITS ET VOLUMES (statistiques annuelles ou journalières)
+        # 2. Format CLASSEMENT GOUVERNORATS PAR DÉBIT MAXIMAL
+        if 'max_debit' in first and 'gouvernorat' in first:
+            top = data[0]
+            top_gouv = top.get('gouvernorat', '')
+            top_val = float(top.get('max_debit', 0))
+            top_st = top.get('station_max', '')
+            top_an = top.get('annee_max', '')
+            an_txt = f" (année {top_an})" if top_an else ""
+            st_txt = f" enregistré à la station **{top_st}**{an_txt}" if top_st else ""
+
+            lines = [
+                f"🌊 Le gouvernorat ayant le plus grand débit est **{top_gouv}**, avec un débit maximal journalier de **{top_val:.2f} m³/s**{st_txt}.\n",
+                "📊 **Classement des gouvernorats par débit maximal enregistré :**\n"
+            ]
+            for i, row in enumerate(data[:10], 1):
+                g = row.get('gouvernorat', '')
+                v = float(row.get('max_debit', 0))
+                s = row.get('station_max', '')
+                a = row.get('annee_max', '')
+                a_str = f" [{a}]" if a else ""
+                s_str = f" — Station {s}{a_str}" if s else ""
+                lines.append(f"  {i}. **{g}** : **{v:.2f} m³/s**{s_str}")
+            return "\n".join(lines)
+
+        # 3. Format CLASSEMENT GOUVERNORATS PAR VOLUME MAXIMAL
+        if 'max_volume' in first and 'gouvernorat' in first:
+            top = data[0]
+            top_gouv = top.get('gouvernorat', '')
+            top_val = float(top.get('max_volume', 0))
+            top_st = top.get('station_max', '')
+            top_an = top.get('annee_max', '')
+            an_txt = f" (année {top_an})" if top_an else ""
+            st_txt = f" mesuré à la station **{top_st}**{an_txt}" if top_st else ""
+
+            lines = [
+                f"💧 Le gouvernorat ayant le plus grand volume annuel d'eau écoulé est **{top_gouv}**, avec un volume maximal de **{top_val:,.2f} Hm³**{st_txt}.\n",
+                "📊 **Classement des gouvernorats par volume annuel maximal :**\n"
+            ]
+            for i, row in enumerate(data[:10], 1):
+                g = row.get('gouvernorat', '')
+                v = float(row.get('max_volume', 0))
+                s = row.get('station_max', '')
+                a = row.get('annee_max', '')
+                a_str = f" [{a}]" if a else ""
+                s_str = f" — Station {s}{a_str}" if s else ""
+                lines.append(f"  {i}. **{g}** : **{v:,.2f} Hm³**{s_str}")
+            return "\n".join(lines)
+
+        # 4. Format NOMBRE DE STATIONS PAR GOUVERNORAT
+        if 'nb_stations' in first and 'gouvernorat' in first:
+            max_nb = data[0].get('nb_stations', 0)
+            top_gouvs = [r.get('gouvernorat', '') for r in data if r.get('nb_stations') == max_nb]
+            if len(top_gouvs) > 1:
+                lead = f"Les gouvernorats qui comptent le plus grand nombre de stations sont **{'** et **'.join(top_gouvs)}** avec **{max_nb} stations** chacun"
+            else:
+                lead = f"Le gouvernorat qui compte le plus grand nombre de stations est **{top_gouvs[0]}** avec **{max_nb} stations**"
+
+            lines = [
+                f"📍 {lead}.\n",
+                "📊 **Répartition des stations par gouvernorat :**\n"
+            ]
+            for i, r in enumerate(data, 1):
+                g = r.get('gouvernorat', '')
+                nb = r.get('nb_stations', 0)
+                lines.append(f"  {i}. **{g}** : {nb} station{'s' if nb > 1 else ''}")
+            return "\n".join(lines)
+
+        # 5. Format TOTAL DES STATIONS
+        if 'total_stations' in first and len(first) == 1:
+            tot = data[0].get('total_stations', 0)
+            return f"📍 Le réseau hydrométrique national de la DGRE compte actuellement un total de **{tot} stations** réparties sur toute la Tunisie."
+
+        # 6. Format SUPERLATIF DÉBIT PAR STATION
+        if any(w in q_lower for w in ['plus grand', 'max', 'maximum', 'record', 'plus fort', 'plus eleve', 'plus élevé']) and 'debit_max_jour' in first and not ('gouvernorat' in q_lower or 'gouv' in q_lower):
+            top = data[0]
+            st = top.get('station') or top.get('nom') or 'Station'
+            gouv = top.get('gouvernorat', '')
+            gouv_str = f" (gouvernorat de **{gouv}**)" if gouv else ""
+            an = top.get('annee')
+            an_str = f" en {an}" if an else ""
+            dmax = float(top.get('debit_max_jour', 0))
+
+            lines = [
+                f"🌊 La station enregistrant le plus grand débit est **{st}**{gouv_str}, avec un débit maximal journalier de **{dmax:.2f} m³/s**{an_str}.\n",
+                f"📊 **Top {len(data)} des débits journaliers maximaux enregistrés :**\n"
+            ]
+            for i, row in enumerate(data[:5], 1):
+                s = row.get('station') or row.get('nom') or 'Station'
+                g = row.get('gouvernorat', '')
+                g_s = f" ({g})" if g else ""
+                a = row.get('annee')
+                a_s = f" [{a}]" if a else ""
+                val = float(row.get('debit_max_jour', 0))
+                lines.append(f"  {i}. **{s}**{g_s}{a_s} — Débit max : **{val:.2f} m³/s**")
+            return "\n".join(lines)
+
+        # 7. Format SUPERLATIF VOLUME PAR STATION
+        if any(w in q_lower for w in ['plus grand', 'max', 'maximum', 'record', 'plus fort', 'plus eleve', 'plus élevé']) and 'volume_total_hm3' in first and not ('gouvernorat' in q_lower or 'gouv' in q_lower):
+            top = data[0]
+            st = top.get('station') or top.get('nom') or 'Station'
+            gouv = top.get('gouvernorat', '')
+            gouv_str = f" (gouvernorat de **{gouv}**)" if gouv else ""
+            an = top.get('annee')
+            an_str = f" en {an}" if an else ""
+            vmax = float(top.get('volume_total_hm3', 0))
+
+            lines = [
+                f"💧 La station enregistrant le plus grand volume d'eau est **{st}**{gouv_str}, avec un volume total annuel de **{vmax:,.2f} Hm³**{an_str}.\n",
+                f"📊 **Top {len(data)} des volumes annuels enregistrés :**\n"
+            ]
+            for i, row in enumerate(data[:5], 1):
+                s = row.get('station') or row.get('nom') or 'Station'
+                g = row.get('gouvernorat', '')
+                g_s = f" ({g})" if g else ""
+                a = row.get('annee')
+                a_s = f" [{a}]" if a else ""
+                val = float(row.get('volume_total_hm3', 0))
+                lines.append(f"  {i}. **{s}**{g_s}{a_s} — Volume : **{val:,.2f} Hm³**")
+            return "\n".join(lines)
+
+        # 8. Format STATIONS HYDROMÉTRIQUES D'UN GOUVERNORAT SPÉCIFIQUE
+        if ('station' in first or 'nom' in first) and 'cours_eau' in first:
+            annee_e, gouv_e, _, _, _, _ = self.rag._extraire_entites(question) if hasattr(self, 'rag') else (None, None, None, None, None, None)
+            if gouv_e:
+                lines = [f"📍 **Stations hydrométriques du gouvernorat de {gouv_e} ({len(data)} résultat(s)) :**\n"]
+                for i, row in enumerate(data, 1):
+                    st = row.get('station') or row.get('nom')
+                    cours = row.get('cours_eau')
+                    cours_str = f" — Cours d'eau : {cours}" if cours else ""
+                    lines.append(f"  {i}. **{st}**{cours_str}")
+                return "\n".join(lines)
+
+        # 9. Format DÉBITS ET VOLUMES GÉNÉRAUX
         if any(k in first for k in ['volume_total_hm3', 'debit_max_jour', 'debit_moyen']):
             lines = [f"💧 **Données de débit et volume ({len(data)} résultat(s)) :**\n"]
             for i, row in enumerate(data, 1):
@@ -1355,7 +1566,7 @@ Ne mentionne pas le terme "score de similarité" directement ou de manière trop
                 lines.append(f"  {i}. **{st}**{gouv_str}{annee_str}{detail_text}")
             return "\n".join(lines)
 
-        # 3. Format STATIONS HYDROMÉTRIQUES
+        # 10. Format STATIONS HYDROMÉTRIQUES (général)
         if 'station' in first or ('nom' in first and 'gouvernorat' in first):
             lines = [f"📍 **Stations hydrométriques ({len(data)} résultat(s)) :**\n"]
             for i, row in enumerate(data, 1):
@@ -1370,7 +1581,7 @@ Ne mentionne pas le terme "score de similarité" directement ou de manière trop
                 lines.append(f"  {i}. " + " — ".join(parts))
             return "\n".join(lines)
 
-        # 4. Format COMPTAGES / STATISTIQUES GLOBALES
+        # 11. Format COMPTAGES / STATISTIQUES GLOBALES
         if any(k in first for k in ['total_stations', 'nb_stations', 'nb_gouvernorats', 'nb_cours_eau']):
             lines = ["📊 **Statistiques :**\n"]
             for row in data:
@@ -1379,14 +1590,14 @@ Ne mentionne pas le terme "score de similarité" directement ou de manière trop
                     lines.append(f"  • **{label}** : {v}")
             return "\n".join(lines)
 
-        # 5. Format COURS D'EAU
+        # 12. Format COURS D'EAU
         if 'cours_eau' in first and len(first) == 1:
             lines = [f"🌊 **Cours d'eau répertoriés ({len(data)} résultat(s)) :**\n"]
             for i, row in enumerate(data, 1):
                 lines.append(f"  {i}. {row.get('cours_eau')}")
             return "\n".join(lines)
 
-        # 6. Format générique propre (exclut coordonnées brutes et IDs)
+        # 13. Format générique propre (exclut coordonnées brutes et IDs)
         lines = [f"📊 **{len(data)} résultat(s) :**\n"]
         for i, row in enumerate(data[:15], 1):
             clean_parts = []

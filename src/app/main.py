@@ -609,10 +609,46 @@ def _table_crues(df_crues):
 
 
 # ============================================================
+# GESTION DES ANNUAIRES HYDROMÉTRIQUES DÉJÀ GÉNÉRÉS
+# ============================================================
+
+def lister_annuaires_generes():
+    """Scanne le dossier output/pdf et retourne la liste des annuaires disponibles avec métadonnées."""
+    pdf_dir = os.path.join(RACINE_PROJET, "output", "pdf")
+    fichiers = []
+    if os.path.exists(pdf_dir):
+        for f in sorted(os.listdir(pdf_dir)):
+            if f.startswith("annuaire_hydrometrique_") and f.endswith(".pdf"):
+                chemin = os.path.join(pdf_dir, f)
+                match = re.search(r'annuaire_hydrometrique_(\d{4})\.pdf', f)
+                annee = int(match.group(1)) if match else None
+                try:
+                    taille_octets = os.path.getsize(chemin)
+                    taille_mo = round(taille_octets / (1024 * 1024), 1)
+                    mtime = datetime.fromtimestamp(os.path.getmtime(chemin)).strftime("%d/%m/%Y à %H:%M")
+                except Exception:
+                    taille_mo = 0.0
+                    taille_octets = 0
+                    mtime = "Date inconnue"
+                fichiers.append({
+                    "nom": f,
+                    "annee": annee,
+                    "cycle": f"{annee}-{annee+1}" if annee else "National",
+                    "taille_mo": taille_mo,
+                    "taille_octets": taille_octets,
+                    "date": mtime,
+                    "chemin": chemin,
+                })
+    fichiers.sort(key=lambda x: x["annee"] or 0, reverse=True)
+    return fichiers
+
+
+# ============================================================
 # ASSISTANT (CHAT)
 # ============================================================
 
 SUGGESTIONS = [
+    "Où trouver les annuaires déjà générés ?",
     "Génère-moi l'annuaire 2019",
     "Quel gouvernorat a le plus grand débit ?",
     "Génère-moi la carte hydrométrique de Béja",
@@ -643,6 +679,8 @@ def _executer_requete(texte):
         message_assistant["image_path"] = resultat["image_path"]
     if resultat.get("pdf_path"):
         message_assistant["pdf_path"] = resultat["pdf_path"]
+    if resultat.get("pdf_list"):
+        message_assistant["pdf_list"] = resultat["pdf_list"]
     st.session_state.messages.append(message_assistant)
 
 
@@ -670,6 +708,25 @@ def render_chat():
     ])
 
     render_status_strip()
+
+    # Bandeau d'accès rapide aux annuaires déjà prêts
+    annuaires_existants = lister_annuaires_generes()
+    if annuaires_existants:
+        cycles_str = ", ".join([a["cycle"] for a in annuaires_existants[:3]])
+        st.markdown(
+            f"""
+            <div class="annuaires-quick-bar">
+                <div class="annuaires-quick-info">
+                    <span class="annuaires-quick-badge">PDF DISPONIBLES</span>
+                    <span><b>{len(annuaires_existants)} annuaire(s) hydrométrique(s)</b> déjà généré(s) au format officiel ({cycles_str}).</span>
+                </div>
+                <a href="/?page=annuaires" target="_self" class="annuaires-quick-link">
+                    Consulter & Télécharger &rarr;
+                </a>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
     if "messages" not in st.session_state:
         st.session_state.messages = [{"role": "assistant", "content": MESSAGE_BIENVENUE}]
@@ -703,15 +760,34 @@ def render_chat():
                 except Exception as e:
                     st.caption(f"Impossible de préparer le téléchargement de l'image : {e}")
 
-            pdf_path = message.get("pdf_path")
-            if pdf_path and os.path.exists(pdf_path):
-                with open(pdf_path, "rb") as f:
-                    st.download_button(
-                        "📄 Télécharger le PDF", data=f.read(),
-                        file_name=os.path.basename(pdf_path), mime="application/pdf",
-                        key=f"dl_{i}",
-                        help="Télécharger le document officiel PDF généré",
-                    )
+            # Téléchargement d'une liste multiple d'annuaires (si renvoyée)
+            pdf_list = message.get("pdf_list")
+            if pdf_list:
+                cols_pdf = st.columns(min(len(pdf_list), 3))
+                for col_idx, item in enumerate(pdf_list):
+                    c_path = item.get("chemin")
+                    if c_path and os.path.exists(c_path):
+                        with open(c_path, "rb") as f_pdf:
+                            pdf_bytes = f_pdf.read()
+                        with cols_pdf[col_idx % len(cols_pdf)]:
+                            st.download_button(
+                                label=f"📄 {item.get('nom')} ({item.get('taille_mo')} Mo)",
+                                data=pdf_bytes,
+                                file_name=item.get("nom"),
+                                mime="application/pdf",
+                                key=f"dl_list_{i}_{col_idx}",
+                                help=f"Télécharger l'annuaire {item.get('cycle') or item.get('annee')}",
+                            )
+            elif message.get("pdf_path"):
+                pdf_path = message["pdf_path"]
+                if os.path.exists(pdf_path):
+                    with open(pdf_path, "rb") as f:
+                        st.download_button(
+                            "📄 Télécharger le PDF", data=f.read(),
+                            file_name=os.path.basename(pdf_path), mime="application/pdf",
+                            key=f"dl_{i}",
+                            help="Télécharger le document officiel PDF généré",
+                        )
 
     prompt = st.chat_input("Écrivez votre question ou votre demande…")
     if prompt:
@@ -720,11 +796,142 @@ def render_chat():
 
 
 # ============================================================
+# PAGE ANNUAIRES HYDROMÉTRIQUES OFFICIELS
+# ============================================================
+
+def render_annuaires():
+    _hero(
+        "Annuaires Hydrométriques Nationaux",
+        "Consultez, téléchargez ou éditez les publications officielles de la Direction Générale des Ressources en Eau (DGRE).",
+        tag="Publications Officielles DGRE",
+    )
+
+    annuaires = lister_annuaires_generes()
+    nb_total = len(annuaires)
+    derniere_edition = annuaires[0]["cycle"] if annuaires else "Aucune"
+
+    # KPI Récapitulatifs
+    col_kpi1, col_kpi2, col_kpi3, col_kpi4 = st.columns(4)
+    with col_kpi1:
+        kpi_card("book", "Éditions disponibles", f"{nb_total} prêtes", accent=True)
+    with col_kpi2:
+        kpi_card("flag", "Dernier cycle publié", derniere_edition)
+    with col_kpi3:
+        kpi_card("building", "Format & Norme", "PDF Vectoriel A4")
+    with col_kpi4:
+        kpi_card("droplet", "Couverture", "Réseau National")
+
+    section_title("book", "Annuaires hydrométriques officiels générés")
+
+    if not annuaires:
+        st.info(
+            "Aucun annuaire PDF n'a encore été généré dans les archives du serveur. "
+            "Vous pouvez en générer un immédiatement à l'aide du formulaire ci-dessous."
+        )
+    else:
+        st.caption(
+            f"{nb_total} document(s) officiel(s) prêt(s) au téléchargement. "
+            "Ces annuaires intègrent les synthèses mensuelles et annuelles, les débits caractéristiques, "
+            "les courbes de tarage et l'analyse détaillée des crues."
+        )
+
+        # Grille de cartes pour chaque annuaire généré
+        cols = st.columns(2)
+        for idx, annuaire in enumerate(annuaires):
+            with cols[idx % 2]:
+                st.markdown(
+                    f"""
+                    <div class="annuaire-pdf-card">
+                        <div>
+                            <div class="annuaire-card-header">
+                                <span class="annuaire-tag">Édition Officielle DGRE</span>
+                                <span style="font-size:0.75rem; color:#61727d; font-weight:600;">{annuaire['date']}</span>
+                            </div>
+                            <div class="annuaire-title">Annuaire Hydrométrique {annuaire['cycle']}</div>
+                            <div class="annuaire-meta">
+                                <div class="annuaire-meta-row">
+                                    <span>📁 <b>Fichier :</b> <code>{annuaire['nom']}</code></span>
+                                </div>
+                                <div class="annuaire-meta-row">
+                                    <span>⚖️ <b>Taille du document :</b> {annuaire['taille_mo']} Mo</span>
+                                </div>
+                                <div class="annuaire-meta-row">
+                                    <span>🏛️ <b>Éditeur :</b> République Tunisienne — DGRE</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+                try:
+                    with open(annuaire["chemin"], "rb") as f_pdf:
+                        pdf_data = f_pdf.read()
+                    st.download_button(
+                        label=f"📥 Télécharger l'annuaire {annuaire['cycle']} ({annuaire['taille_mo']} Mo)",
+                        data=pdf_data,
+                        file_name=annuaire["nom"],
+                        mime="application/pdf",
+                        key=f"btn_dl_{annuaire['annee']}_{idx}",
+                        type="primary",
+                        use_container_width=True,
+                    )
+                except Exception as e:
+                    st.error(f"Erreur de lecture du fichier : {e}")
+
+    # Section de génération d'une nouvelle édition
+    st.markdown("<br>", unsafe_allow_html=True)
+    section_title("upload", "Générer une nouvelle édition de l'annuaire")
+    
+    col_form, col_info = st.columns([1, 1])
+    with col_form:
+        st.markdown(
+            "Sélectionnez une année hydrologique pour lancer la compilation complète de l'annuaire :"
+        )
+        annees_dispos = [2024, 2023, 2022, 2021, 2020, 2019, 2018, 2017, 2016]
+        annee_selectionnee = st.selectbox(
+            "Année hydrologique (début de cycle) :",
+            options=annees_dispos,
+            index=0,
+            key="sel_annee_gen",
+        )
+        if st.button("🚀 Lancer la génération officielle du PDF", type="secondary", use_container_width=True):
+            with st.spinner(f"Génération de l'annuaire {annee_selectionnee}-{annee_selectionnee+1} en cours (calculs, graphiques et mise en page)..."):
+                try:
+                    res = orchestrator.execute(f"Génère l'annuaire {annee_selectionnee}")
+                    if res.get("status") == "success" or res.get("pdf_path"):
+                        st.success(f"Annuaire {annee_selectionnee}-{annee_selectionnee+1} généré avec succès !")
+                        st.rerun()
+                    else:
+                        st.error(f"Erreur lors de la génération : {res.get('message', 'inconnue')}")
+                except Exception as exc:
+                    st.error(f"Erreur inattendue : {exc}")
+
+    with col_info:
+        st.markdown(
+            """
+            <div style="background: rgba(255, 255, 255, 0.7); border: 1px solid rgba(28, 43, 56, 0.12); border-radius: 14px; padding: 1.1rem 1.3rem;">
+                <h5 style="margin-top:0; color:#1c2b38; font-weight:700;">Contenu type d'un annuaire officiel DGRE :</h5>
+                <ul style="font-size:0.85rem; color:#4a5568; line-height:1.6; margin-bottom:0; padding-left: 1.2rem;">
+                    <li><b>Page de garde & Mentions légales :</b> République Tunisienne, DGRE, Direction de l'Hydrologie.</li>
+                    <li><b>Carte du réseau :</b> Localisation géographique des stations actives.</li>
+                    <li><b>Fiches stations complètes :</b> Coordonnées, BV, jaugeages et historique.</li>
+                    <li><b>Tableaux hydrologiques :</b> Débits moyens journaliers, mensuels et modules.</li>
+                    <li><b>Synthèse des crues :</b> Débits de pointe, cotes maximales et volumes écoulés.</li>
+                </ul>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+
+# ============================================================
 # NAVIGATION
 # ============================================================
 
 PAGE_DASHBOARD = "Tableau de bord"
 PAGE_ASSISTANT = "Assistant"
+PAGE_ANNUAIRES = "Annuaires"
 
 # Synchronisation bidirectionnelle fluide avec query_params (menu flottant et liens)
 query_page = st.query_params.get("page", None)
@@ -733,6 +940,8 @@ if query_page:
         st.session_state["selected_page"] = PAGE_ASSISTANT
     elif query_page.lower() == "dashboard":
         st.session_state["selected_page"] = PAGE_DASHBOARD
+    elif query_page.lower() in ("annuaires", "annuaire", "pdf"):
+        st.session_state["selected_page"] = PAGE_ANNUAIRES
 
 if "selected_page" not in st.session_state:
     st.session_state["selected_page"] = PAGE_DASHBOARD
@@ -746,13 +955,18 @@ if st.query_params.get("refresh") == "1":
 
 current_page = st.session_state["selected_page"]
 
+# Calcul du nombre d'annuaires générés pour le badge dynamique du menu
+nb_annuaires_generes = len(lister_annuaires_generes())
+
 # Affichage du menu pilule glassmorphic flottant (Uiverse.io by mymiamo) - AU-DESSUS des logos
-render_floating_nav(current_page)
+render_floating_nav(current_page, nb_annuaires=nb_annuaires_generes)
 
 # En-tête institutionnel officiel style data.gouv.fr (République Tunisienne + Logo DGRE)
 render_institutional_header()
 
 if current_page == PAGE_DASHBOARD:
     render_dashboard()
+elif current_page == PAGE_ANNUAIRES:
+    render_annuaires()
 else:
     render_chat()
