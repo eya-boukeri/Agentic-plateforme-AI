@@ -37,9 +37,9 @@ class AgentLLM:
         self.model = model or os.getenv("LLM_MODEL", "hydrometrie")
         self.host = host or os.getenv("LLM_HOST", "http://localhost:11434")
         try:
-            self.timeout = int(os.getenv("LLM_TIMEOUT", "180"))
+            self.timeout = int(os.getenv("LLM_TIMEOUT", "30"))
         except (ValueError, TypeError):
-            self.timeout = 180
+            self.timeout = 30
         self.api_url = f"{self.host}/api/generate"
         self.chat_url = f"{self.host}/api/chat"
         self.available = False
@@ -47,6 +47,7 @@ class AgentLLM:
         self.last_check = None
         self.available_models = []
         self.status_message = "Non vérifié"
+        self.last_error = None
         
         # Vérifier la disponibilité d'Ollama
         self._check_availability()
@@ -127,6 +128,7 @@ class AgentLLM:
         if not self.available:
             return None
         
+        self.last_error = None
         try:
             # Construire le prompt complet
             full_prompt = ""
@@ -160,9 +162,11 @@ class AgentLLM:
                 return None
                 
         except requests.exceptions.Timeout:
+            self.last_error = 'timeout'
             print("❌ Erreur LLM: Timeout - Le modèle met trop de temps à répondre")
             return None
         except Exception as e:
+            self.last_error = str(e)
             print(f"❌ Erreur LLM: {e}")
             return None
     
@@ -190,6 +194,7 @@ class AgentLLM:
         if not self.available:
             return None
         
+        self.last_error = None
         try:
             payload = {
                 "model": self.model,
@@ -252,9 +257,11 @@ class AgentLLM:
                 return None
                 
         except requests.exceptions.Timeout:
+            self.last_error = 'timeout'
             print(f"❌ Erreur LLM chat: Timeout dépassé ({self.timeout}s)")
             return None
         except Exception as e:
+            self.last_error = str(e)
             print(f"❌ Erreur LLM chat: {e}")
             return None
     

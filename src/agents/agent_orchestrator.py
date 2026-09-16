@@ -398,6 +398,24 @@ class AgentOrchestrator:
                 'message': f"Génération du graphique / comparaison hydrométrique pour {annee}"
             }
         
+        # === INTENTION DE DÉFINITION OU EXPLICATION GÉNÉRALE ===
+        definition_triggers = [
+            'definition', 'définition', "qu'est-ce que l'hydrometrie", "qu'est-ce que l'hydrométrie",
+            "qu'est ce que l'hydrometrie", "qu'est ce que l'hydrométrie", "c'est quoi l'hydrometrie",
+            "c'est quoi l'hydrométrie", "c'est quoi la dgre", "role de la dgre", "rôle de la dgre",
+            "mission de la dgre", "missions de la dgre"
+        ]
+        if any(trig in input_lower for trig in definition_triggers) or (
+            any(w in input_lower for w in ['definition', 'définition'])
+            and any(h in input_lower for h in ['hydrometrie', 'hydrométrie', 'hydrometrique', 'hydrométrique', 'hdrometrie', 'hdrométrie', 'dgre'])
+        ):
+            return {
+                'type': 'definition',
+                'subtype': 'hydrometrie',
+                'params': {},
+                'message': "Définition de l'hydrométrie et missions de la DGRE"
+            }
+
         # === INTENTION DE QUESTION FACTUELLE ===
         question_keywords = [
             'quel', 'quelle', 'quels', 'quelles', 'combien', 'comment', 'pourquoi', 'est-ce que',
@@ -545,6 +563,10 @@ class AgentOrchestrator:
             print(f"🎯 Intention hydrométrique directe : {intent_rapide['subtype']}")
             return self._handle_question(intent_rapide, user_input)
 
+        if intent_rapide['type'] == 'definition':
+            print(f"🎯 Intention définition directe : {intent_rapide['subtype']}")
+            return self._handle_definition(user_input)
+
         if intent_rapide['type'] == 'help':
             return self._handle_help(intent_rapide)
 
@@ -554,10 +576,31 @@ class AgentOrchestrator:
             print(f"🎯 Intention (LLM): {intent_llm['type']} - {intent_llm['subtype']}")
             return self._executer_intention_llm(intent_llm, user_input=user_input)
 
-        print("ℹ️ LLM indisponible ou reponse non exploitable - repli sur les mots-cles")
+        llm = self._get_llm()
+        llm_error = getattr(llm, 'last_error', None)
+        print(f"ℹ️ LLM indisponible ou reponse non exploitable (erreur: {llm_error}) - repli sur les mots-cles")
         intent = intent_rapide
         print(f"🎯 Intention (mots-cles): {intent['type']} - {intent['subtype']}")
         
+        # Si le modèle a échoué pour cause de timeout GPU et qu'il n'y a pas d'entité/mot-clé hydrométrique précis
+        if llm_error == 'timeout' and intent.get('subtype') == 'general':
+            msg_gpu = (
+                "⚠️ **Délai d'attente dépassé (Problème de GPU / LLM).**\n\n"
+                "Le modèle d'intelligence artificielle a mis trop de temps à répondre pour analyser votre demande.\n\n"
+                "💡 **Cause :** Les ressources du GPU local (NVIDIA GeForce MX450 - 2 Go) sont insuffisantes "
+                "pour faire tourner le modèle de 7.6 milliards de paramètres.\n\n"
+                "👉 **Recommandations :**\n"
+                "• Posez une question plus ciblée avec des termes hydrométriques précis (ex: *« Quel gouvernorat a le plus grand débit ? »*, *« Informations sur les crues »*, *« Génère l'annuaire 2019 »*).\n"
+                "• Ou connectez le modèle distant avec GPU dédié via Google Colab (`python maj_llm_host.py <url>`)."
+            )
+            return {
+                'status': 'warning',
+                'type': 'gpu_timeout',
+                'subtype': 'llm_timeout',
+                'message': msg_gpu,
+                'answer': msg_gpu
+            }
+
         if intent['type'] == 'question':
             return self._handle_question(intent, user_input)
         else:
@@ -1292,6 +1335,30 @@ Voici la comparaison détaillée des débits et événements de crue enregistré
                 'message': f"❌ Erreur lors du traitement : {str(e)}"
             }
     
+    def _handle_definition(self, user_input):
+        """Fournit une réponse explicative claire et immédiate sur l'hydrométrie et la DGRE."""
+        texte = (
+            "🌊 **Qu'est-ce que l'hydrométrie ?**\n\n"
+            "L'**hydrométrie** est la science et l'ensemble des techniques de mesure des eaux continentales de surface : "
+            "hauteurs d'eau dans les cours d'eau (oueds), débits (m³/s), vitesses d'écoulement et volumes d'eau transitant vers les barrages.\n\n"
+            "🏛️ **Rôle de la DGRE (Direction Générale des Ressources en Eau) :**\n"
+            "• Gestion et maintenance du **réseau national de stations hydrométriques** réparties sur toute la Tunisie.\n"
+            "• Suivi et alerte en cas de **crues exceptionnelles et inondations**.\n"
+            "• Collecte, contrôle qualité et publication officielle de l'**Annuaire Hydrométrique national**.\n\n"
+            "💡 **Exemples de questions directes :**\n"
+            "• *« Quel gouvernorat a le plus grand débit ? »*\n"
+            "• *« Donne-moi les informations sur les crues »*\n"
+            "• *« Génère-moi la carte hydrométrique de Béja »*\n"
+            "• *« Génère l'annuaire 2019 »*"
+        )
+        return {
+            'status': 'success',
+            'type': 'definition',
+            'subtype': 'hydrometrie',
+            'message': texte,
+            'answer': texte
+        }
+
     def _handle_help(self, intent):
         """Gère l'aide"""
         help_text = """

@@ -343,7 +343,10 @@ class AgentRAG:
                 else:
                     cursor_res = conn.exec_driver_sql(query, (params,))
             else:
-                cursor_res = conn.exec_driver_sql(query)
+                try:
+                    cursor_res = conn.execute(text(query))
+                except Exception:
+                    cursor_res = conn.exec_driver_sql(query)
 
             rows = cursor_res.mappings().all()
             result = [dict(r) for r in rows]
@@ -614,12 +617,22 @@ Requête SQL :
                     if c not in stations:
                         stations.append(c)
 
-        return annee, gouvernorat, stations, date_iso, date_fr
+        # 4. Station explicite nommée (ex: "station Atlantis", "station Oued El Kébir")
+        station_nom_libre = None
+        if 'station' in q and not stations:
+            m_st = re.search(r'station\s+(?:de\s+|du\s+|d\')?([a-zA-Z0-9\s\-]+)', q)
+            if m_st:
+                nom_pot = m_st.group(1).strip()
+                nom_pot = re.sub(r'\b(en|dans|de|du|pour|l\'annee|annee|\d{4})\b.*', '', nom_pot).strip()
+                if nom_pot and len(nom_pot) >= 3 and nom_pot not in ('tout', 'toutes', 'reseau', 'tunisie', 'mesure'):
+                    station_nom_libre = nom_pot
 
-    def _understand_with_keywords(self, question, fallback_default=True):
+        return annee, gouvernorat, stations, date_iso, date_fr, station_nom_libre
+
+    def _understand_with_keywords(self, question, fallback_default=False):
         """Comprend la question avec extraction d'entités (date, année, gouvernorat, stations) et mots-clés"""
         q = question.lower()
-        annee, gouvernorat, stations, date_iso, date_fr = self._extraire_entites(question)
+        annee, gouvernorat, stations, date_iso, date_fr, station_nom_libre = self._extraire_entites(question)
         
         # --- DÉBITS JOURNALIERS À DATE SPÉCIFIQUE ---
         if date_iso:
@@ -627,6 +640,8 @@ Requête SQL :
             if stations:
                 st_in = "'" + "','".join(stations) + "'"
                 where_clauses.append(f"s.code_station IN ({st_in})")
+            elif station_nom_libre:
+                where_clauses.append(f"LOWER(s.nom) LIKE LOWER('%{station_nom_libre}%')")
             elif gouvernorat:
                 where_clauses.append(f"UPPER(s.gouvernorat) LIKE '%{gouvernorat}%'")
             return f"""
@@ -643,6 +658,8 @@ Requête SQL :
             if stations:
                 st_in = "'" + "','".join(stations) + "'"
                 where_clauses.append(f"s.code_station IN ({st_in})")
+            elif station_nom_libre:
+                where_clauses.append(f"LOWER(s.nom) LIKE LOWER('%{station_nom_libre}%')")
             elif gouvernorat:
                 where_clauses.append(f"UPPER(s.gouvernorat) LIKE '%{gouvernorat}%'")
             if annee:
@@ -663,6 +680,8 @@ Requête SQL :
                 if stations:
                     st_in = "'" + "','".join(stations) + "'"
                     where_clauses.append(f"s.code_station IN ({st_in})")
+                elif station_nom_libre:
+                    where_clauses.append(f"LOWER(s.nom) LIKE LOWER('%{station_nom_libre}%')")
                 elif gouvernorat:
                     where_clauses.append(f"UPPER(s.gouvernorat) LIKE '%{gouvernorat}%'")
                 if annee:
@@ -680,6 +699,8 @@ Requête SQL :
                 if stations:
                     st_in = "'" + "','".join(stations) + "'"
                     where_clauses.append(f"s.code_station IN ({st_in})")
+                elif station_nom_libre:
+                    where_clauses.append(f"LOWER(s.nom) LIKE LOWER('%{station_nom_libre}%')")
                 elif gouvernorat:
                     where_clauses.append(f"UPPER(s.gouvernorat) LIKE '%{gouvernorat}%'")
                 if annee:
@@ -697,6 +718,8 @@ Requête SQL :
                 if stations:
                     st_in = "'" + "','".join(stations) + "'"
                     where_clauses.append(f"s.code_station IN ({st_in})")
+                elif station_nom_libre:
+                    where_clauses.append(f"LOWER(s.nom) LIKE LOWER('%{station_nom_libre}%')")
                 elif gouvernorat:
                     where_clauses.append(f"UPPER(s.gouvernorat) LIKE '%{gouvernorat}%'")
                 if annee:
@@ -716,6 +739,8 @@ Requête SQL :
             if stations:
                 st_in = "'" + "','".join(stations) + "'"
                 where_clauses.append(f"s.code_station IN ({st_in})")
+            elif station_nom_libre:
+                where_clauses.append(f"LOWER(s.nom) LIKE LOWER('%{station_nom_libre}%')")
             elif gouvernorat:
                 where_clauses.append(f"UPPER(s.gouvernorat) LIKE '%{gouvernorat}%'")
             if annee:
@@ -779,8 +804,7 @@ Requête SQL :
         if not fallback_default:
             return None
 
-        # Requête par défaut - retourner quelques stations avec nom et gouvernorat utiles
-        return "SELECT nom as station, gouvernorat, cours_eau FROM station LIMIT 10"
+        return None
 
     def understand_question(self, question):
         """Comprend la question et génère une requête SQL"""
@@ -797,9 +821,9 @@ Requête SQL :
             print(f"🤖 LLM a généré: {sql[:100]}...")
             return sql
         
-        # 3. Fallback: mots-clés par défaut
-        print("🔍 Utilisation de la requête par défaut")
-        return self._understand_with_keywords(question, fallback_default=True)
+        # 3. Ne plus renvoyer de fallback aveugle sur 10 stations
+        print("ℹ️ Aucune requête SQL déduite pour cette demande.")
+        return None
 
     def indexer_stations_dans_zvec(self):
         """Lit toutes les stations de la base PostgreSQL et les indexe dans Zvec"""
@@ -1120,9 +1144,9 @@ class AgentRAGOrchestrator:
         is_semantic_fallback = False
 
         # Extraire les entités pour vérifier s'il s'agit d'une recherche temporelle / de données
-        annee, gouvernorat, stations, date_iso, date_fr = self.rag._extraire_entites(question)
+        annee, gouvernorat, stations, date_iso, date_fr, station_nom_libre = self.rag._extraire_entites(question)
         est_requete_donnees = bool(
-            date_iso or annee or stations or any(
+            date_iso or annee or stations or station_nom_libre or any(
                 w in question.lower() for w in [
                     'crue', 'crues', 'crus', 'inondation', 'debit', 'débit',
                     'volume', 'hm3', 'moyen', 'maximum', 'statistique', 'eau',
@@ -1145,6 +1169,19 @@ class AgentRAGOrchestrator:
                 
         # 2. Si pas de données trouvées dans la base :
         if not data or len(data) == 0:
+            # Si le LLM a échoué par timeout (problème de ressources GPU)
+            llm_err = getattr(self.rag.llm, 'last_error', None) if self.rag.llm else None
+            if llm_err == 'timeout':
+                return (
+                    "⚠️ **Délai d'attente dépassé (Problème de GPU / LLM).**\n\n"
+                    "Le modèle de langage local a mis trop de temps à répondre pour traiter cette question.\n\n"
+                    "💡 **Cause :** Les ressources du GPU local (NVIDIA GeForce MX450 - 2 Go) sont insuffisantes "
+                    "pour exécuter le modèle de 7.6 milliards de paramètres en local.\n\n"
+                    "👉 **Recommandations :**\n"
+                    "• Posez une question ciblée avec des termes hydrométriques précis (ex: *« Quel gouvernorat a le plus grand débit ? »*, *« Informations sur les crues »*, *« Stations de Béja »*).\n"
+                    "• Ou relancez le modèle distant avec GPU dédié via Google Colab (`python maj_llm_host.py <url>`)."
+                )
+
             # Ne faire de recherche sémantique Zvec QUE si c'est explicitement une recherche descriptive de station
             # et JAMAIS pour une demande de données à une date/période donnée !
             if not est_requete_donnees and self.rag.zvec_db and any(
@@ -1158,13 +1195,13 @@ class AgentRAGOrchestrator:
                     print(f"🧠 Recherche sémantique Zvec a trouvé {len(data)} stations similaires.")
                     return self._format_semantic_answer(question, data)
 
-            # Si c'était une requête de données temporelles/factuelles, répondre explicitement qu'aucune donnée n'existe dans la base
-            print(f"ℹ️ Aucune donnée trouvée dans la base pour la requête temporelle/factuelle.")
-            return self._format_no_data_answer(question, annee=annee, date_fr=date_fr, stations=stations, gouvernorat=gouvernorat)
+            # Répondre clairement qu'aucune donnée n'existe dans la base
+            print(f"ℹ️ Aucune donnée trouvée dans la base hydrométrique.")
+            return self._format_no_data_answer(question, annee=annee, date_fr=date_fr, stations=stations, gouvernorat=gouvernorat, station_nom_libre=station_nom_libre)
 
         return self._format_answer(question, data, sql)
 
-    def _format_no_data_answer(self, question, annee=None, date_fr=None, stations=None, gouvernorat=None):
+    def _format_no_data_answer(self, question, annee=None, date_fr=None, stations=None, gouvernorat=None, station_nom_libre=None):
         """Formate une réponse claire et explicite indiquant l'absence de données dans la base."""
         elements = []
         if date_fr:
@@ -1172,7 +1209,9 @@ class AgentRAGOrchestrator:
         elif annee:
             elements.append(f"l'année **{annee}**")
 
-        if stations:
+        if station_nom_libre:
+            elements.append(f"la station **{station_nom_libre.title()}**")
+        elif stations:
             stations_info = self.rag.get_stations_info() if hasattr(self.rag, 'get_stations_info') else []
             stations_noms = []
             for code in stations:

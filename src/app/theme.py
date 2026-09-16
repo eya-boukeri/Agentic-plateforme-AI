@@ -479,14 +479,10 @@ def apply_theme(bg_image_b64=None, bg_image_mime="image/jpeg"):
         .dgre-wordmark {{
             font-family: "Inter", -apple-system, BlinkMacSystemFont, sans-serif;
             font-weight: 800;
-            font-size: 1.95rem;
+            font-size: 1.85rem;
             line-height: 1.05;
-            letter-spacing: -0.03em;
+            letter-spacing: -0.02em;
             color: #000091; /* Bleu Marianne data.gouv.fr */
-        }}
-
-        .dgre-wordmark span.accent {{
-            color: #1f6fd6;
         }}
 
         .dgre-entity {{
@@ -495,12 +491,6 @@ def apply_theme(bg_image_b64=None, bg_image_mime="image/jpeg"):
             color: #243342;
             margin-top: 3px;
             letter-spacing: -0.01em;
-        }}
-
-        .dgre-ministry {{
-            font-size: 0.72rem;
-            font-weight: 500;
-            color: #6d7d8b;
         }}
 
         /* Badge d'autorité à droite */
@@ -1520,7 +1510,8 @@ def render_sidebar_stars():
     )
 
 
-@st.cache_resource(show_spinner=False)
+_INSTITUTIONAL_CACHE = {}
+
 def _institutional_assets():
     import os
     import base64
@@ -1530,18 +1521,31 @@ def _institutional_assets():
     # Logo DGRE officiel (transparent de preference, sinon normal)
     p_dgre_trans = os.path.join(data_dir, "logo_dgre_transparent.png")
     p_dgre = os.path.join(data_dir, "logo_dgre.png")
-    dgre_b64 = None
     target_dgre = p_dgre_trans if os.path.exists(p_dgre_trans) else (p_dgre if os.path.exists(p_dgre) else None)
-    if target_dgre:
-        with open(target_dgre, "rb") as f:
-            dgre_b64 = base64.b64encode(f.read()).decode("ascii")
+    dgre_mtime = os.path.getmtime(target_dgre) if target_dgre else None
+
+    if target_dgre and _INSTITUTIONAL_CACHE.get("dgre_mtime") == dgre_mtime:
+        dgre_b64 = _INSTITUTIONAL_CACHE.get("dgre_b64")
+    else:
+        dgre_b64 = None
+        if target_dgre:
+            with open(target_dgre, "rb") as f:
+                dgre_b64 = base64.b64encode(f.read()).decode("ascii")
+            _INSTITUTIONAL_CACHE["dgre_mtime"] = dgre_mtime
+            _INSTITUTIONAL_CACHE["dgre_b64"] = dgre_b64
 
     # Drapeau de la Tunisie
     p_flag = os.path.join(data_dir, "drapeau_tunisie.png")
-    flag_b64 = None
-    if os.path.exists(p_flag):
-        with open(p_flag, "rb") as f:
-            flag_b64 = base64.b64encode(f.read()).decode("ascii")
+    flag_mtime = os.path.getmtime(p_flag) if os.path.exists(p_flag) else None
+    if os.path.exists(p_flag) and _INSTITUTIONAL_CACHE.get("flag_mtime") == flag_mtime:
+        flag_b64 = _INSTITUTIONAL_CACHE.get("flag_b64")
+    else:
+        flag_b64 = None
+        if os.path.exists(p_flag):
+            with open(p_flag, "rb") as f:
+                flag_b64 = base64.b64encode(f.read()).decode("ascii")
+            _INSTITUTIONAL_CACHE["flag_mtime"] = flag_mtime
+            _INSTITUTIONAL_CACHE["flag_b64"] = flag_b64
 
     return dgre_b64, flag_b64
 
@@ -1575,9 +1579,8 @@ def render_institutional_header():
         '<div class="dgre-brand-block">'
         f'{dgre_html}'
         '<div class="dgre-title-group">'
-        '<div class="dgre-wordmark">dgre<span class="accent">eau</span></div>'
+        '<div class="dgre-wordmark">DGRE</div>'
         '<div class="dgre-entity">Direction Générale des Ressources en Eau</div>'
-        '<div class="dgre-ministry">Ministère de l\'Agriculture, des Ressources Hydrauliques et de la Pêche</div>'
         '</div>'
         '</div>'
         '</div>'
