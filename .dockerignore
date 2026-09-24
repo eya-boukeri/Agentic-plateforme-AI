@@ -1,23 +1,55 @@
-# .dockerignore
+# Environnements virtuels Python
 venv/
+venv-64/
+.venv/
+env/
+
+# Cache Python et builds
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
-.Python
+*.py[cod]
+*$py.class
 *.so
-*.egg
-*.egg-info/
+.Python
 dist/
 build/
-.env
+*.egg
+*.egg-info/
+
+# Git et configuration IDE
 .git/
 .gitignore
-*.md
-.DS_Store
-data/
-output/
+.claude/
+.gemini/
+.vscode/
+.idea/
+
+# Variables d'environnement locales
+.env
+.env.*
+
+# Fichiers de log et rapports générés
 logs/
 *.log
-*.sql
+output/pdf/*
+output/logs/*
+output/maps/*
+output/graphs/*
+!output/**/.gitkeep
+
+# Données brutes volumineuses / dumps locaux
+backup.sql
+*.sql.gz
 *.sqlite
+*.sqlite3
+jet*..xls*
+dataset_finetuning.jsonl
+inventaire reseau*.xlsx
+barrages_detail*.xlsx
+data/raw/*
+data/processed/*
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+
+# Système
+.DS_Store
+Thumbs.db

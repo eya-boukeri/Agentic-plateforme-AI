@@ -1,6 +1,6 @@
 services:
   # ============================================================
-  # PostgreSQL - Base de données
+  # PostgreSQL - Base de données hydrométrique
   # ============================================================
   postgres:
     image: postgres:16
@@ -14,7 +14,7 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./scripts:/docker-entrypoint-initdb.d
+      - ./scripts/init_db.sql:/docker-entrypoint-initdb.d/01_init_db.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
       interval: 10s
@@ -24,15 +24,15 @@ services:
       - hydrology_network
 
   # ============================================================
-  # pgAdmin - Interface graphique
+  # pgAdmin - Interface graphique d'administration BDD
   # ============================================================
   pgadmin:
     image: dpage/pgadmin4:latest
     container_name: hydrology_pgadmin
     restart: unless-stopped
     environment:
-      PGADMIN_DEFAULT_EMAIL: admin@hydrology.com
-      PGADMIN_DEFAULT_PASSWORD: admin
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@hydrology.com}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-admin}
       PGADMIN_CONFIG_SERVER_MODE: 'False'
     ports:
       - "5050:80"
@@ -45,9 +45,49 @@ services:
         condition: service_healthy
 
   # ============================================================
-  # Application - Agents
+  # Ollama - Serveur IA conteneurisé
+  # ============================================================
+  ollama:
+    image: ollama/ollama:latest
+    container_name: hydrology_ollama
+    restart: unless-stopped
+    ports:
+      - "11435:11434" # Port 11435 vers l'hôte pour éviter tout conflit avec un Ollama local
+    volumes:
+      - ollama_data:/root/.ollama
+      - ./Modelfile:/Modelfile:ro
+    networks:
+      - hydrology_network
+
+  # ============================================================
+  # Initialisation automatique des modèles IA dans Ollama
+  # ============================================================
+  ollama-init:
+    image: ollama/ollama:latest
+    container_name: hydrology_ollama_init
+    depends_on:
+      - ollama
+    volumes:
+      - ./Modelfile:/Modelfile:ro
+    networks:
+      - hydrology_network
+    entrypoint: ["/bin/sh", "-c"]
+    command: >
+      "
+      echo '⏳ Attente du démarrage du serveur Ollama...';
+      until OLLAMA_HOST=ollama:11434 ollama list > /dev/null 2>&1; do sleep 2; done;
+      echo '📥 Téléchargement du modèle de recherche sémantique (RAG) nomic-embed-text...';
+      OLLAMA_HOST=ollama:11434 ollama pull nomic-embed-text;
+      echo '🤖 Création du modèle personnalisé hydrométrie...';
+      OLLAMA_HOST=ollama:11434 ollama create hydrometrie -f /Modelfile;
+      echo '✅ Modèles prêts et enregistrés !';
+      "
+
+  # ============================================================
+  # Application Hydrométrie (Streamlit & Agents IA)
   # ============================================================
   app:
+    image: eya0503/hydrometrie-app:latest
     build:
       context: .
       dockerfile: Dockerfile
@@ -56,40 +96,12 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-    environment:
-      DB_HOST: postgres
-      DB_PORT: 5432
-      DB_NAME: ${POSTGRES_DB:-hydrometry}
-      DB_USER: ${POSTGRES_USER:-postgres}
-      DB_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
-      DB_SCHEMA: public
-      PYTHONPATH: /app
-      LLM_HOST: http://host.docker.internal:11434
-      LLM_MODEL: hydrometrie
-      LLM_TIMEOUT: 30
-    volumes:
-      - ./data:/app/data
-      - ./output:/app/output
-      - ./config:/app/config
-      - ./src:/app/src
-    networks:
-      - hydrology_network
-
-  # ============================================================
-  # Streamlit - Interface utilisateur
-  # ============================================================
-  streamlit:
-    build:
-      context: .
-      dockerfile: Dockerfile.streamlit
-    container_name: hydrology_streamlit
-    restart: unless-stopped
-    depends_on:
-      postgres:
-        condition: service_healthy
+      ollama:
+        condition: service_started
     environment:
       STREAMLIT_SERVER_PORT: 8501
       STREAMLIT_SERVER_ADDRESS: 0.0.0.0
+      STREAMLIT_SERVER_HEADLESS: "true"
       DB_HOST: postgres
       DB_PORT: 5432
       DB_NAME: ${POSTGRES_DB:-hydrometry}
@@ -97,28 +109,28 @@ services:
       DB_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
       DB_SCHEMA: public
       PYTHONPATH: /app
-      LLM_HOST: http://host.docker.internal:11434
-      LLM_MODEL: hydrometrie
-      LLM_TIMEOUT: 30
+      LLM_HOST: http://ollama:11434
+      LLM_MODEL: ${LLM_MODEL:-hydrometrie}
+      LLM_TIMEOUT: 60
     ports:
       - "8501:8501"
     volumes:
-      - ./run_app_v64.ps1:/app/run_app_v64.ps1
-      - ./src:/app/src
-      - ./config:/app/config
-      - ./output:/app/output
       - ./data:/app/data
+      - ./output:/app/output
+      - ./config:/app/config
     networks:
       - hydrology_network
 
 # ============================================================
-# Volumes
+# Volumes persistants
 # ============================================================
 volumes:
   postgres_data:
     name: hydrology_postgres_data
   pgadmin_data:
     name: hydrology_pgadmin_data
+  ollama_data:
+    name: hydrology_ollama_data
 
 # ============================================================
 # Networks

@@ -29,6 +29,7 @@ openpyxl>=3.1.2
 pillow>=11.0.0
 xlrd>=2.0.1
 pandas-access>=0.0.1
+requests>=2.31.0
 
 # Testing
 pytest>=7.4.3
@@ -36,3 +37,6 @@ pytest>=7.4.3
 # Cartographie (SIG)
 geopandas>=1.0
 rasterio>=1.4
+
+# Semantic search (RAG)
+zvec>=0.6.0
